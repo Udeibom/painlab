@@ -29,7 +29,7 @@ Build mode: fast — checkpoint after Slice 3, final review after Slice 6
   Learner check: Click into the case you created in Slice 1. Confirm you can see the case name, description, and empty investigation panels.
   Commit: `Slice 2: case detail page, empty Current State panel and timeline`
 
-- [ ] **3. Add Observation and Hypothesis — type picker, typed timeline, Current State panel live** ← CHECKPOINT
+- [x] **3. Add Observation and Hypothesis — type picker, typed timeline, Current State panel live** ← CHECKPOINT
   Becomes usable: "Add to investigation" button opens type picker. Observation and Hypothesis forms work. Timeline shows both types with distinct visual treatment. Current State panel reflects added entries. Hypothesis shows Proposed status badge.
   Why now: This is the kernel. The type distinction is enforced here — both in the data layer and in the UI. This is the earliest point the product principle is demonstrably real.
   PRD ref: `prd.md > Add to investigation`, `prd.md > Investigation Timeline`, `prd.md > Current State panel`, `prd.md > Observation form`, `prd.md > Hypothesis form`
