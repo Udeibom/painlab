@@ -3,6 +3,7 @@ import { getCaseWithEntries } from "@/server/services/painCaseService";
 import { CurrentStatePanel } from "@/components/investigation/CurrentStatePanel";
 import { InvestigationTimeline } from "@/components/investigation/InvestigationTimeline";
 import { AddToInvestigation } from "@/components/investigation/AddToInvestigation";
+import { CaseEditButton } from "@/components/pain-case/CaseEditButton";
 import { Badge } from "@/components/ui/Badge";
 import Link from "next/link";
 
@@ -65,7 +66,8 @@ export default async function CaseDetailPage({
               {painCase.description}
             </p>
           </div>
-          <div className="flex flex-shrink-0 gap-2">
+          <div className="flex flex-shrink-0 items-center gap-2">
+            <CaseEditButton painCase={painCase} />
             <Badge color={statusColors[painCase.status] ?? "gray"}>
               {statusLabels[painCase.status] ?? painCase.status}
             </Badge>
