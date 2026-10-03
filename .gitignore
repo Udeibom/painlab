@@ -1,0 +1,15 @@
+# Devpost Learn: personal learning context stays out of commits by default
+devpost/learner-profile.md
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Build artifacts
+node_modules
+.next
+
+# OS files
+.DS_Store
+tsconfig.tsbuildinfo

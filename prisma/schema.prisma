@@ -1,0 +1,208 @@
+// PainLab — Prisma schema
+// Source of truth for the data model. See devpost/spec.md > Data Model.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// --- Enums ---
+
+enum PainCaseStatus {
+  ACTIVE
+  PAUSED
+  RESOLVED
+  ABANDONED
+}
+
+enum Importance {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum EntrySource {
+  USER
+  AI
+}
+
+enum HypothesisStatus {
+  PROPOSED
+  SUPPORTED
+  PARTIALLY_SUPPORTED
+  CONTRADICTED
+  UNRESOLVED
+  INSUFFICIENT_EVIDENCE
+}
+
+enum ExperimentStatus {
+  PLANNED
+  IN_PROGRESS
+  COMPLETED
+  ABANDONED
+}
+
+enum ResultOutcome {
+  AS_EXPECTED
+  UNEXPECTED
+  INCONCLUSIVE
+}
+
+enum Confidence {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum SourceType {
+  WEB
+  ARTICLE
+  PAPER
+  VIDEO
+  FORUM
+  REDDIT
+  DOCS
+  OTHER
+}
+
+enum EvidenceRelation {
+  SUPPORTS
+  CONTRADICTS
+}
+
+// --- Core Entities ---
+
+model PainCase {
+  id             String          @id @default(cuid())
+  title          String
+  description    String
+  status         PainCaseStatus  @default(ACTIVE)
+  importance     Importance      @default(MEDIUM)
+  tags           String[]        @default([])
+  currentSummary String?         // reserved for future AI use; NOT used to drive the Current State panel
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  observations      Observation[]
+  hypotheses        Hypothesis[]
+  experiments       Experiment[]
+  learnings         Learning[]
+  evidence          Evidence[]
+
+  @@map("pain_cases")
+}
+
+model Observation {
+  id         String      @id @default(cuid())
+  painCaseId String
+  painCase   PainCase    @relation(fields: [painCaseId], references: [id], onDelete: Cascade)
+  content    String      // what was directly observed/experienced
+  observedAt DateTime    @default(now())
+  context    String?     // optional: surrounding circumstances
+  source     EntrySource @default(USER) // USER | AI — all USER in this slice
+  createdAt  DateTime    @default(now())
+
+  @@map("observations")
+}
+
+model Hypothesis {
+  id          String          @id @default(cuid())
+  painCaseId  String
+  painCase    PainCase        @relation(fields: [painCaseId], references: [id], onDelete: Cascade)
+  statement   String
+  rationale   String?
+  status      HypothesisStatus @default(PROPOSED)
+  confidence  String?         // reserved; not surfaced in UI this slice
+  createdBy   EntrySource     @default(USER)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  experiments      Experiment[]
+  evidenceLinks    HypothesisEvidenceLink[]
+
+  @@map("hypotheses")
+}
+
+model Experiment {
+  id             String            @id @default(cuid())
+  painCaseId      String
+  painCase       PainCase          @relation(fields: [painCaseId], references: [id], onDelete: Cascade)
+  hypothesisId   String?
+  hypothesis     Hypothesis?        @relation(fields: [hypothesisId], references: [id], onDelete: SetNull)
+  title          String
+  question       String            // what you're trying to learn
+  procedure      String?
+  expectedOutcome String?          // recorded before running; compared to result afterward
+  startDate      DateTime?
+  endDate        DateTime?
+  status         ExperimentStatus   @default(PLANNED)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  result         ExperimentResult?
+
+  @@map("experiments")
+}
+
+model ExperimentResult {
+  id               String          @id @default(cuid())
+  experimentId     String          @unique // one result per experiment; enforced at DB level
+  experiment       Experiment      @relation(fields: [experimentId], references: [id], onDelete: Cascade)
+  whatHappened     String          // factual account; field name reinforces the distinction
+  outcome          ResultOutcome?
+  unexpectedEffects String?
+  createdAt        DateTime        @default(now())
+
+  @@map("experiment_results")
+}
+
+model Learning {
+  id         String      @id @default(cuid())
+  painCaseId String
+  painCase   PainCase    @relation(fields: [painCaseId], references: [id], onDelete: Cascade)
+  statement  String
+  basis      String?     // brief: "based on Result from Experiment 1"
+  confidence Confidence?
+  createdBy  EntrySource @default(USER)
+  createdAt  DateTime    @default(now())
+
+  @@map("learnings")
+}
+
+// --- Evidence (schema only, no UI in this slice) ---
+
+model Evidence {
+  id          String     @id @default(cuid())
+  painCaseId  String
+  painCase    PainCase   @relation(fields: [painCaseId], references: [id], onDelete: Cascade)
+  title       String
+  claim       String
+  source      String
+  sourceType  SourceType
+  url         String?
+  excerpt     String?
+  confidence  Confidence?
+  addedBy     EntrySource @default(USER)
+  publishedAt DateTime?
+  retrievedAt DateTime   @default(now())
+  createdAt   DateTime   @default(now())
+
+  hypothesisLinks HypothesisEvidenceLink[]
+
+  @@map("evidence")
+}
+
+model HypothesisEvidenceLink {
+  hypothesisId String
+  hypothesis   Hypothesis @relation(fields: [hypothesisId], references: [id], onDelete: Cascade)
+  evidenceId   String
+  evidence     Evidence   @relation(fields: [evidenceId], references: [id], onDelete: Cascade)
+  relation     EvidenceRelation
+
+  @@id([hypothesisId, evidenceId])
+  @@map("hypothesis_evidence_links")
+}
