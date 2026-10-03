@@ -5,8 +5,10 @@ import type {
   ExperimentResult,
   Learning,
 } from "@prisma/client";
+import { HypothesisStatusEditor } from "./HypothesisStatusEditor";
 
 interface InvestigationTimelineProps {
+  painCaseId: string;
   observations: Observation[];
   hypotheses: Hypothesis[];
   experiments: (Experiment & {
@@ -23,9 +25,15 @@ type TimelineEntry = {
   createdAt: Date;
   content: string;
   meta?: { label: string; value: string }[];
+  // Hypothesis-specific: for inline status editing
+  hypothesis?: {
+    id: string;
+    status: string;
+  };
 };
 
 function buildTimeline(
+  painCaseId: string,
   observations: Observation[],
   hypotheses: Hypothesis[],
   experiments: InvestigationTimelineProps["experiments"],
@@ -52,8 +60,11 @@ function buildTimeline(
       type: "hypothesis",
       createdAt: hyp.createdAt,
       content: hyp.statement,
+      hypothesis: {
+        id: hyp.id,
+        status: hyp.status,
+      },
       meta: [
-        { label: "Status", value: hyp.status.replace(/_/g, " ").toLowerCase() },
         ...(hyp.rationale
           ? [{ label: "Rationale", value: hyp.rationale }]
           : []),
@@ -74,6 +85,10 @@ function buildTimeline(
           ? [{ label: "Expected", value: exp.expectedOutcome }]
           : []),
         { label: "Status", value: exp.status.replace(/_/g, " ").toLowerCase() },
+        {
+          label: "Result",
+          value: exp.result ? "Recorded \u2193" : "No result yet",
+        },
       ],
     });
 
@@ -164,7 +179,13 @@ const typeStyles = {
   },
 } as const;
 
-function TimelineEntryCard({ entry }: { entry: TimelineEntry }) {
+function TimelineEntryCard({
+  entry,
+  painCaseId,
+}: {
+  entry: TimelineEntry;
+  painCaseId: string;
+}) {
   const style = typeStyles[entry.type];
 
   return (
@@ -183,6 +204,18 @@ function TimelineEntryCard({ entry }: { entry: TimelineEntry }) {
 
       <p className="mt-2 text-sm text-stone-800">{entry.content}</p>
 
+      {/* Inline hypothesis status editor — replaces flat status text */}
+      {entry.hypothesis && (
+        <div className="mt-2">
+          <span className="text-xs font-medium text-stone-400">Status: </span>
+          <HypothesisStatusEditor
+            hypothesisId={entry.hypothesis.id}
+            painCaseId={painCaseId}
+            currentStatus={entry.hypothesis.status}
+          />
+        </div>
+      )}
+
       {entry.meta && entry.meta.length > 0 && (
         <dl className="mt-2 space-y-0.5">
           {entry.meta.map((m) => (
@@ -198,12 +231,14 @@ function TimelineEntryCard({ entry }: { entry: TimelineEntry }) {
 }
 
 export function InvestigationTimeline({
+  painCaseId,
   observations,
   hypotheses,
   experiments,
   learnings,
 }: InvestigationTimelineProps) {
   const entries = buildTimeline(
+    painCaseId,
     observations,
     hypotheses,
     experiments,
@@ -225,7 +260,11 @@ export function InvestigationTimeline({
   return (
     <div className="space-y-2">
       {entries.map((entry) => (
-        <TimelineEntryCard key={entry.id} entry={entry} />
+        <TimelineEntryCard
+          key={entry.id}
+          entry={entry}
+          painCaseId={painCaseId}
+        />
       ))}
     </div>
   );

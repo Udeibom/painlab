@@ -114,6 +114,7 @@ export default async function CaseDetailPage({
             />
           </div>
           <InvestigationTimeline
+            painCaseId={painCase.id}
             observations={painCase.observations}
             hypotheses={painCase.hypotheses}
             experiments={painCase.experiments}

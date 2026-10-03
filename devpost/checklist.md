@@ -39,7 +39,7 @@ Build mode: fast — checkpoint after Slice 3, final review after Slice 6
   Learner check: Add at least one real Observation and one real Hypothesis for your Pain Case. Check that they look visually different from each other in the timeline and that the Current State panel reflects what you entered.
   Commit: `Slice 3: type picker, Observation and Hypothesis forms, typed timeline, live Current State panel`
 
-- [ ] **4. Add Experiment and Result (attached to Experiment, dependency enforced)**
+- [x] **4. Add Experiment and Result (attached to Experiment, dependency enforced)**
   Becomes usable: Experiment form works. Result type is always visible in picker but disabled ("Create an Experiment first") until an Experiment exists. Recording a Result does not touch the Hypothesis. Experiment entry shows Result inline once one exists.
   Why now: Completes the test phase of the investigation loop. The hard product rule (Result does not change Hypothesis status) is structurally enforced here.
   PRD ref: `prd.md > Experiment form`, `prd.md > Result form`, `prd.md > Add to investigation`, `prd.md > Investigation Timeline`
@@ -49,7 +49,7 @@ Build mode: fast — checkpoint after Slice 3, final review after Slice 6
   Learner check: Create an Experiment for your Pain Case. Record what actually happened as a Result. Confirm your Hypothesis status is still "Proposed" — the system should not have changed it.
   Commit: `Slice 4: Experiment and Result forms, dependency enforced, no auto-hypothesis update`
 
-- [ ] **5. Add Learning + inline Hypothesis status edit**
+- [x] **5. Add Learning + inline Hypothesis status edit**
   Becomes usable: Learning form works. Clicking a Hypothesis status badge in the timeline opens an inline picker to change it. Changing status never creates a Learning or touches any Result.
   Why now: Completes the full investigation loop. The interpretation step is now explicit and user-controlled end to end.
   PRD ref: `prd.md > Learning form`, `prd.md > Investigation Timeline` (Hypothesis inline edit), `prd.md > Product Decisions`
@@ -71,7 +71,7 @@ Build mode: fast — checkpoint after Slice 3, final review after Slice 6
 
 ## Hands-on Checkpoints
 
-- [ ] Early kernel checkpoint — after Slice 3: learner adds real Observation + Hypothesis, confirms type distinction is visible and Current State panel is live
+- [x] Early kernel checkpoint — after Slice 3: learner adds real Observation + Hypothesis, confirms type distinction is visible and Current State panel is live
 - [ ] Final kick-the-tires — after Slice 6: full core journey walkthrough, feedback resolved
 
 ## Final Review
