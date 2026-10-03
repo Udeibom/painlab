@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import { getCaseWithEntries } from "@/server/services/painCaseService";
 import { CurrentStatePanel } from "@/components/investigation/CurrentStatePanel";
 import { InvestigationTimeline } from "@/components/investigation/InvestigationTimeline";
+import { AddToInvestigation } from "@/components/investigation/AddToInvestigation";
 import { Badge } from "@/components/ui/Badge";
 import Link from "next/link";
 
@@ -106,15 +107,11 @@ export default async function CaseDetailPage({
             <h2 className="text-sm font-semibold text-stone-700">
               Investigation Timeline
             </h2>
-            {/* Add to investigation button — wired up in slice 3 */}
-            <button
-              type="button"
-              className="rounded-md bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-700 disabled:opacity-50"
-              disabled
-              title="Coming in the next build step"
-            >
-              + Add to investigation
-            </button>
+            {/* Add to investigation */}
+            <AddToInvestigation
+              painCaseId={painCase.id}
+              experiments={painCase.experiments}
+            />
           </div>
           <InvestigationTimeline
             observations={painCase.observations}

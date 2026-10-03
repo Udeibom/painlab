@@ -9,7 +9,7 @@ Build mode: fast — checkpoint after Slice 3, final review after Slice 6
 
 ## Slices
 
-- [ ] **1. Project scaffold + home screen: see and create Pain Cases**
+- [x] **1. Project scaffold + home screen: see and create Pain Cases**
   Becomes usable: Running app at localhost:3000. Create a Pain Case, see it listed.
   Why now: Proves the full data path (form → Server Action → Prisma → Postgres → render) before anything depends on it. Bootstrapping folds in here.
   PRD ref: `prd.md > Home Screen`, `prd.md > The Core Journey` (steps 1–2)
@@ -19,7 +19,7 @@ Build mode: fast — checkpoint after Slice 3, final review after Slice 6
   Learner check: Open localhost:3000, create a Pain Case for a real problem, reload the page and confirm it's still there.
   Commit: `Slice 1: scaffold, schema, home screen — create and list Pain Cases`
 
-- [ ] **2. Case detail page: layout, Current State panel (empty), Investigation Timeline (empty)**
+- [x] **2. Case detail page: layout, Current State panel (empty), Investigation Timeline (empty)**
   Becomes usable: Clicking a case opens its detail page. Two-column layout visible. Both panels show "none yet" empty states. Case title and description shown.
   Why now: Establishes the detail page structure and routing before entry forms are added. Proves navigation works.
   PRD ref: `prd.md > Pain Case Detail Page`, `prd.md > Screens and Layout`
