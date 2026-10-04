@@ -10,6 +10,8 @@
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",
+    "@tavily/core": "^0.5.14",
+    "groq-sdk": "^0.9.1",
     "next": "^15.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

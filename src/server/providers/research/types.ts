@@ -1,6 +1,6 @@
-// Research Provider interface — reserved for future use.
-// No implementation is called in this slice.
-// See devpost/spec.md > Provider Interfaces.
+// Research Provider interface.
+// TavilyResearchProvider is the real implementation.
+// See devpost/spec-v2-agent-layer.md > New Provider Implementations.
 
 export interface FindEvidenceInput {
   query: string;
@@ -10,12 +10,10 @@ export interface FindEvidenceInput {
 
 export interface FoundEvidence {
   title: string;
-  claim: string;
-  source: string;
-  sourceType: string;
-  url?: string;
-  excerpt?: string;
-  publishedAt?: Date;
+  url: string;
+  snippet: string;
+  relevanceScore?: number;
+  sourceType?: string;
 }
 
 export interface SummarizeSourcesInput {
@@ -29,5 +27,7 @@ export interface SourceSummary {
 
 export interface ResearchProvider {
   findEvidence(input: FindEvidenceInput): Promise<FoundEvidence[]>;
+  readPage(url: string): Promise<string>;
+  searchReddit(query: string, subreddits?: string[]): Promise<FoundEvidence[]>;
   summarizeSources(input: SummarizeSourcesInput): Promise<SourceSummary>;
 }

@@ -1,20 +1,39 @@
-// NullAiProvider — no-op implementation satisfying the AiProvider interface.
-// Used as the default so the rest of the code compiles cleanly.
-// No calls to this provider exist in the service layer in this slice.
+// NullAiProvider — no-op satisfying the AiProvider interface.
+// Used as default so the codebase compiles cleanly without keys.
 
-import type { AiProvider } from "./types";
+import type {
+  AiProvider,
+  StructurePainCaseInput,
+  StructuredPainCaseOutput,
+  GenerateCandidatesInput,
+  GeneratedCandidate,
+  KillRoundInput,
+  KillRoundResult,
+  JudgeProfileInput,
+  JudgeProfileOutput,
+  ExtractFindingsInput,
+  StructuredFindings,
+  SummarizeEvidenceInput,
+  EvidenceSummary,
+} from "./types";
 
 export class NullAiProvider implements AiProvider {
-  async structurePainCase() {
-    return { title: "", description: "", tags: [] };
+  async structurePainCase(_: StructurePainCaseInput): Promise<StructuredPainCaseOutput> {
+    return { title: "", description: "", tags: [], searchQueries: [] };
   }
-  async generateHypotheses() {
+  async generateCandidates(_: GenerateCandidatesInput): Promise<GeneratedCandidate[]> {
     return [];
   }
-  async summarizeEvidence() {
+  async killRound(_: KillRoundInput): Promise<KillRoundResult> {
+    return { attackAngle: "user", attack: "", survived: false, reason: "Null provider" };
+  }
+  async synthesizeJudgeProfile(_: JudgeProfileInput): Promise<JudgeProfileOutput> {
+    return { inferredValues: [], inferredPreferences: "", confidence: "LOW" };
+  }
+  async extractStructuredFindings(_: ExtractFindingsInput): Promise<StructuredFindings> {
+    return { evidence: [], hypotheses: [], learnings: [] };
+  }
+  async summarizeEvidence(_: SummarizeEvidenceInput): Promise<EvidenceSummary> {
     return { summary: "", disagreements: [] };
-  }
-  async extractLearnings() {
-    return [];
   }
 }

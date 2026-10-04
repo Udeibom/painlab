@@ -32,6 +32,16 @@ export async function getCaseWithEntries(id: string) {
         include: { result: true, hypothesis: true },
       },
       learnings: { orderBy: { createdAt: "asc" } },
+      evidence: { orderBy: { createdAt: "asc" } },
+      hackathonContext: {
+        include: {
+          agentRuns: {
+            orderBy: { startedAt: "desc" },
+            take: 1, // only the most recent run for the panel
+            include: { steps: { orderBy: { stepNumber: "asc" } } },
+          },
+        },
+      },
     },
   });
 }

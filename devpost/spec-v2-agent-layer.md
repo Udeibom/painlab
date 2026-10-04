@@ -52,8 +52,8 @@ You tell PainLab: "I'm entering [hackathon], here's the brief, these are the jud
 
 ### LLM (Reasoning)
 **Groq** — free tier, extremely fast, no credit card required.
-- Model: `llama-3.1-8b-instant` (fast, cheap, sufficient for structured reasoning)
-- For deeper synthesis: `llama-3.3-70b-versatile` (still free tier, higher quality)
+- Fast model: `openai/gpt-oss-20b` (fast, sufficient for structured reasoning)
+- Smart model: `openai/gpt-oss-120b` (higher quality, for synthesis tasks)
 - API key: https://console.groq.com → free account → API Keys
 - Rate limits: ~30 req/min on free tier — the agent must respect these with delays between calls
 - SDK: `groq-sdk` npm package

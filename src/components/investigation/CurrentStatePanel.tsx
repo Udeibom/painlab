@@ -18,6 +18,7 @@ interface CurrentStatePanelProps {
   hypotheses: Hypothesis[];
   experiments: Experiment[];
   learnings: Learning[];
+  evidenceCount?: number;
 }
 
 const hypothesisStatusLabels: Record<string, string> = {
@@ -74,6 +75,7 @@ export function CurrentStatePanel({
   hypotheses,
   experiments,
   learnings,
+  evidenceCount = 0,
 }: CurrentStatePanelProps) {
   const uncertainHypotheses = hypotheses.filter((h) => isUncertain(h.status));
   const activeExperiments = experiments.filter(
@@ -92,6 +94,18 @@ export function CurrentStatePanel({
         </p>
         <p className="mt-1 text-sm text-stone-600">{painCase.description}</p>
       </div>
+
+      {/* Evidence collected (from agent) */}
+      {evidenceCount > 0 && (
+        <div>
+          <h3 className="text-xs font-semibold uppercase tracking-wide text-stone-400">
+            Evidence collected
+          </h3>
+          <p className="mt-1 text-sm text-stone-600">
+            {evidenceCount} item{evidenceCount !== 1 ? "s" : ""} — scroll timeline to review
+          </p>
+        </div>
+      )}
 
       {/* Observed so far */}
       <Section label="Observed so far" count={observations.length}>

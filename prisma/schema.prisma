@@ -92,6 +92,7 @@ model PainCase {
   experiments       Experiment[]
   learnings         Learning[]
   evidence          Evidence[]
+  hackathonContext  HackathonContext?
 
   @@map("pain_cases")
 }
@@ -173,7 +174,103 @@ model Learning {
   @@map("learnings")
 }
 
-// --- Evidence (schema only, no UI in this slice) ---
+// --- Agent Layer ---
+
+enum AgentRunStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+  KILLED_ALL
+}
+
+model HackathonContext {
+  id              String   @id @default(cuid())
+  painCaseId      String   @unique
+  painCase        PainCase @relation(fields: [painCaseId], references: [id], onDelete: Cascade)
+  hackathonName   String
+  hackathonBrief  String
+  resources       String?
+  judges          String[]
+  targetCommunity String
+  constraints     String?
+  createdAt       DateTime @default(now())
+
+  judgeProfiles JudgeProfile[]
+  agentRuns     AgentRun[]
+
+  @@map("hackathon_contexts")
+}
+
+model JudgeProfile {
+  id                 String           @id @default(cuid())
+  hackathonContextId String
+  hackathonContext   HackathonContext @relation(fields: [hackathonContextId], references: [id], onDelete: Cascade)
+  judgeName          String
+  sourceUrls         String[]
+  inferredValues     String[]
+  inferredPreferences String
+  rawExcerpts        String[]
+  confidence         Confidence
+  createdAt          DateTime        @default(now())
+
+  @@map("judge_profiles")
+}
+
+model AgentRun {
+  id                 String           @id @default(cuid())
+  hackathonContextId String
+  hackathonContext   HackathonContext @relation(fields: [hackathonContextId], references: [id], onDelete: Cascade)
+  status             AgentRunStatus  @default(RUNNING)
+  stopRequested      Boolean         @default(false)
+  startedAt          DateTime        @default(now())
+  completedAt        DateTime?
+  errorMessage       String?
+  candidatesEvaluated Int            @default(0)
+  candidatesSurvived  Int            @default(0)
+  summary            String?
+
+  steps      AgentStep[]
+  candidates SolutionCandidate[]
+
+  @@map("agent_runs")
+}
+
+model AgentStep {
+  id          String   @id @default(cuid())
+  agentRunId  String
+  agentRun    AgentRun @relation(fields: [agentRunId], references: [id], onDelete: Cascade)
+  stepNumber  Int
+  stepType    String   // SEARCH | READ_URL | GENERATE | CRITICIZE | JUDGE_PROFILE | CONCLUDE
+  description String
+  inputJson   String?  // what was sent to tool/LLM (truncated if large)
+  outputJson  String?  // what came back (truncated if large)
+  tokensUsed  Int?
+  durationMs  Int?
+  createdAt   DateTime @default(now())
+
+  @@map("agent_steps")
+}
+
+model SolutionCandidate {
+  id                   String   @id @default(cuid())
+  agentRunId           String
+  agentRun             AgentRun @relation(fields: [agentRunId], references: [id], onDelete: Cascade)
+  title                String
+  description          String
+  targetProblem        String
+  evidenceSources      String[]
+  killRounds           Json     // [{round, attackAngle, attack, survived, reason}]
+  survived             Boolean  @default(false)
+  survivalReason       String?
+  eliminationReason    String?
+  judgeAlignmentScore  String?  // LOW | MEDIUM | HIGH
+  judgeAlignmentReason String?
+  createdAt            DateTime @default(now())
+
+  @@map("solution_candidates")
+}
+
+// --- Evidence (schema only in v1, now with agent writing to it) ---
 
 model Evidence {
   id          String     @id @default(cuid())

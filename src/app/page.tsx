@@ -1,6 +1,7 @@
 import { getPainCases } from "@/server/services/painCaseService";
 import { PainCaseCard } from "@/components/pain-case/PainCaseCard";
 import { CreateCaseForm } from "@/components/pain-case/CreateCaseForm";
+import { HackathonInvestigateButton } from "@/components/investigation/HackathonInvestigateButton";
 
 export default async function HomePage() {
   const painCases = await getPainCases();
@@ -8,7 +9,7 @@ export default async function HomePage() {
   return (
     <main className="mx-auto max-w-3xl px-6 py-10">
       <header className="mb-8">
-        <div className="flex items-center justify-between">
+        <div className="flex items-start justify-between gap-4">
           <div>
             <h1 className="text-xl font-semibold text-stone-900">PainLab</h1>
             <p className="text-sm text-stone-500">
@@ -16,7 +17,10 @@ export default async function HomePage() {
               you suspect, what you tested, and what you learned.
             </p>
           </div>
-          <CreateCaseForm />
+          <div className="flex flex-shrink-0 gap-2">
+            <HackathonInvestigateButton />
+            <CreateCaseForm />
+          </div>
         </div>
       </header>
 
@@ -25,9 +29,14 @@ export default async function HomePage() {
           <p className="max-w-md text-stone-600">
             PainLab helps you investigate recurring problems — separating what
             you&apos;ve observed, what you suspect, what you tested, and what
-            you learned. Start by naming a pain.
+            you learned.
           </p>
-          <div className="mt-6">
+          <p className="mt-2 max-w-md text-sm text-stone-500">
+            Start a manual investigation, or let the agent research a hackathon
+            opportunity for you.
+          </p>
+          <div className="mt-6 flex gap-3">
+            <HackathonInvestigateButton />
             <CreateCaseForm />
           </div>
         </div>
