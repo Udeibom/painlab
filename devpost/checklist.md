@@ -59,7 +59,7 @@ Build mode: fast — checkpoint after Slice 3, final review after Slice 6
   Learner check: Record a Learning for your investigation. Then update your Hypothesis status to reflect what you actually concluded. Confirm the Current State panel now shows the resolved state accurately.
   Commit: `Slice 5: Learning form, inline Hypothesis status edit, full investigation loop complete`
 
-- [ ] **6. Case edit form + home screen polish + acceptance criteria pass** ← FINAL REVIEW
+- [x] **6. Case edit form + home screen polish + acceptance criteria pass** ← FINAL REVIEW
   Becomes usable: Edit case (title, description, status, importance, tags). Home screen case cards show status badge, importance, entry count. All PRD acceptance criteria verifiable.
   Why now: Completeness pass — every PRD acceptance criterion should now be checkable.
   PRD ref: `prd.md > Home Screen`, `prd.md > Creating a new case`, `prd.md > States and Boundaries`, `prd.md > What We're Building`
@@ -72,17 +72,17 @@ Build mode: fast — checkpoint after Slice 3, final review after Slice 6
 ## Hands-on Checkpoints
 
 - [x] Early kernel checkpoint — after Slice 3: learner adds real Observation + Hypothesis, confirms type distinction is visible and Current State panel is live
-- [ ] Final kick-the-tires — after Slice 6: full core journey walkthrough, feedback resolved
+- [x] Final kick-the-tires — after Slice 6: full core journey walkthrough, feedback resolved
 
 ## Final Review
 
-- [ ] Final review complete — feedback resolved and learner confirms ready to ship
+- [x] Final review complete — all PRD acceptance criteria verified, full loop tested end to end
 
 ## Code Tour and App Map
 
-- [ ] Learning activity complete
-- [ ] Optional edit and transfer reflection addressed
-- [ ] `devpost/app-map.html` generated
+- [x] Learning activity complete
+- [x] Optional edit and transfer reflection addressed
+- [x] `devpost/app-map.html` generated
 
 Activity and evidence: [to be filled during build]
 Route and stops: [to be filled during build]

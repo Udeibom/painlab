@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PainLab — App Map</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, -apple-system, sans-serif; background: #fafaf9; color: #1c1917; padding: 2rem; }
+    h1 { font-size: 1.25rem; font-weight: 600; margin-bottom: 0.25rem; }
+    .subtitle { color: #78716c; font-size: 0.875rem; margin-bottom: 2rem; }
+    h2 { font-size: 0.85rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; color: #a8a29e; margin: 2rem 0 0.75rem; }
+    .grid { display: grid; gap: 1rem; }
+    .grid-2 { grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+    .grid-3 { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+    .card { background: white; border: 1px solid #e7e5e4; border-radius: 8px; padding: 1rem; }
+    .card-title { font-weight: 600; font-size: 0.9rem; margin-bottom: 0.4rem; }
+    .card-sub { font-size: 0.8rem; color: #78716c; margin-bottom: 0.5rem; }
+    .tag { display: inline-block; font-size: 0.7rem; font-weight: 500; padding: 0.15rem 0.5rem; border-radius: 9999px; margin: 0.15rem 0.1rem 0; }
+    .route { font-family: monospace; font-size: 0.78rem; color: #44403c; background: #f5f5f4; padding: 0.15rem 0.4rem; border-radius: 4px; margin-bottom: 0.3rem; display: inline-block; }
+    ul { padding-left: 1.1rem; font-size: 0.82rem; color: #57534e; }
+    ul li { margin-bottom: 0.2rem; }
+    .type-row { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.4rem; font-size: 0.82rem; }
+    .dot { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+    .loop { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin: 0.5rem 0; }
+    .loop-item { padding: 0.3rem 0.75rem; border-radius: 6px; font-size: 0.82rem; font-weight: 500; }
+    .arrow { color: #a8a29e; font-size: 0.9rem; }
+    .rule { background: #fef9c3; border: 1px solid #fde68a; border-radius: 6px; padding: 0.6rem 0.8rem; font-size: 0.8rem; margin-top: 0.5rem; }
+    .rule strong { color: #92400e; }
+    .section-divider { border: none; border-top: 1px solid #e7e5e4; margin: 1.5rem 0 0; }
+  </style>
+</head>
+<body>
+
+<h1>PainLab — App Map</h1>
+<p class="subtitle">A personal investigation system. Separates what you observed, what you suspect, what you tested, and what you learned.</p>
+
+<h2>The Investigation Loop</h2>
+<div class="loop">
+  <span class="loop-item" style="background:#e0f2fe;color:#0369a1;">Pain</span>
+  <span class="arrow">→</span>
+  <span class="loop-item" style="background:#e0f2fe;color:#0369a1;">Observation</span>
+  <span class="arrow">→</span>
+  <span class="loop-item" style="background:#fef3c7;color:#92400e;">Hypothesis</span>
+  <span class="arrow">→</span>
+  <span class="loop-item" style="background:#ede9fe;color:#6d28d9;">Experiment</span>
+  <span class="arrow">→</span>
+  <span class="loop-item" style="background:#d1fae5;color:#065f46;">Result</span>
+  <span class="arrow">→</span>
+  <span class="loop-item" style="background:#ffe4e6;color:#9f1239;">Learning</span>
+</div>
+
+<h2>Entry Type Visual System</h2>
+<div class="card" style="max-width:480px;">
+  <div class="type-row"><div class="dot" style="background:#0ea5e9;"></div><strong>Observation</strong> — sky/blue — something directly noticed or experienced</div>
+  <div class="type-row"><div class="dot" style="background:#f59e0b;"></div><strong>Hypothesis</strong> — amber — a possible explanation, not a fact</div>
+  <div class="type-row"><div class="dot" style="background:#8b5cf6;"></div><strong>Experiment</strong> — violet — something tried to learn something</div>
+  <div class="type-row"><div class="dot" style="background:#10b981;"></div><strong>Result</strong> — emerald — what happened (not what it means)</div>
+  <div class="type-row"><div class="dot" style="background:#f43f5e;"></div><strong>Learning</strong> — rose — explicit interpretation, user-authored</div>
+  <div class="rule"><strong>Hard rule:</strong> recording a Result never changes a Hypothesis status or creates a Learning automatically. Both are deliberate user actions.</div>
+</div>
+
+<h2>Screens</h2>
+<div class="grid grid-2">
+
+  <div class="card">
+    <div class="card-title">Home Screen</div>
+    <div class="route">GET /</div>
+    <div class="card-sub">Lists all Pain Cases. Empty state explains the concept. Always shows "Start investigating a pain" action.</div>
+    <ul>
+      <li>Case card: title, description, status badge, importance badge, entry count, tags</li>
+      <li>Create case modal: title (required), description (required), importance</li>
+      <li>On create → redirects to Case Detail</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Case Detail Page</div>
+    <div class="route">GET /cases/[id]</div>
+    <div class="card-sub">Two-column layout. Full investigation workspace.</div>
+    <ul>
+      <li><strong>Left: Current State panel</strong> — derived from entries, not AI-generated. Sections: The pain, Observed so far, Current hypotheses (with status), Active experiments, What I've learned, What remains uncertain (Proposed/Unresolved/Insufficient Evidence)</li>
+      <li><strong>Right: Investigation Timeline</strong> — chronological, typed entries with distinct color borders + badges</li>
+      <li><strong>Add to investigation</strong> — single action, type picker, opens per-type form</li>
+      <li><strong>Edit</strong> — updates title, description, status, importance, tags</li>
+    </ul>
+  </div>
+
+</div>
+
+<h2>Entry Forms (via type picker on Case Detail)</h2>
+<div class="grid grid-3">
+
+  <div class="card">
+    <div class="card-title" style="color:#0369a1;">Observation</div>
+    <ul>
+      <li>Content (required) — "what did you observe?"</li>
+      <li>Observed at (datetime)</li>
+      <li>Context (optional)</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <div class="card-title" style="color:#92400e;">Hypothesis</div>
+    <ul>
+      <li>Statement (required) — "what do you suspect?"</li>
+      <li>Rationale (optional)</li>
+      <li>Status defaults to <strong>Proposed</strong></li>
+      <li>Inline status edit: click badge in timeline → dropdown</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <div class="card-title" style="color:#6d28d9;">Experiment</div>
+    <ul>
+      <li>Title (required)</li>
+      <li>Question — "what are you trying to learn?" (required)</li>
+      <li>Procedure (optional)</li>
+      <li>Expected outcome (optional, recorded before running)</li>
+      <li>Start date (optional)</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <div class="card-title" style="color:#065f46;">Result</div>
+    <ul>
+      <li>Linked Experiment (required — enforced by UI + DB unique constraint)</li>
+      <li>"What happened?" (required, labeled factually not interpretively)</li>
+      <li>Outcome: As expected / Unexpected / Inconclusive</li>
+      <li>Unexpected effects (optional)</li>
+      <li><em>Disabled in picker until an Experiment exists</em></li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <div class="card-title" style="color:#9f1239;">Learning</div>
+    <ul>
+      <li>Statement (required) — "what did you learn?"</li>
+      <li>Basis (optional)</li>
+      <li>Confidence: Low / Medium / High</li>
+      <li><em>Never auto-generated</em></li>
+    </ul>
+  </div>
+
+</div>
+
+<h2>API Routes</h2>
+<div class="card" style="max-width:560px;">
+  <div style="font-size:0.82rem;line-height:1.9;">
+    <div><span class="route">POST /api/cases</span> Create Pain Case</div>
+    <div><span class="route">PATCH /api/cases/[id]</span> Update Pain Case (title, description, status, importance, tags)</div>
+    <div><span class="route">POST /api/observations</span> Create Observation</div>
+    <div><span class="route">POST /api/hypotheses</span> Create Hypothesis</div>
+    <div><span class="route">PATCH /api/hypotheses/[id]/status</span> Update Hypothesis status only — never touches Results or Learnings</div>
+    <div><span class="route">POST /api/experiments</span> Create Experiment</div>
+    <div><span class="route">POST /api/experiment-results</span> Create Result (calls createExperimentResult only — hard rule)</div>
+    <div><span class="route">POST /api/learnings</span> Create Learning</div>
+  </div>
+</div>
+
+<h2>Data Model (key relationships)</h2>
+<div class="card" style="max-width:560px;font-size:0.82rem;line-height:2;">
+  <div>PainCase → has many: Observations, Hypotheses, Experiments, Learnings, Evidence*</div>
+  <div>Experiment → has one: ExperimentResult (<code>@unique experimentId</code>)</div>
+  <div>Experiment → optionally linked to one Hypothesis</div>
+  <div>HypothesisEvidenceLink* — join table (hypothesisId, evidenceId, SUPPORTS/CONTRADICTS)</div>
+  <div style="color:#78716c;font-size:0.77rem;">* Evidence and HypothesisEvidenceLink exist in the schema, no UI in this slice</div>
+</div>
+
+<h2>Architecture Boundaries</h2>
+<div class="card" style="max-width:560px;">
+  <ul>
+    <li><strong>Service layer</strong> — only code that touches Prisma. No HTTP, no framework concerns.</li>
+    <li><strong>API routes</strong> — validate with Zod, call one service function, return JSON. No business logic.</li>
+    <li><strong>Components</strong> — server components fetch via service layer; client components call API routes.</li>
+    <li><strong>AiProvider interface</strong> — defined at <code>src/server/providers/ai/types.ts</code>, NullAiProvider default. No calls in this slice.</li>
+    <li><strong>ResearchProvider interface</strong> — defined at <code>src/server/providers/research/types.ts</code>. No calls in this slice.</li>
+    <li><strong>currentSummary field</strong> — exists on PainCase, nullable, never written. Reserved for future AI narrative summary.</li>
+  </ul>
+</div>
+
+<h2>Running the App</h2>
+<div class="card" style="max-width:480px;font-family:monospace;font-size:0.82rem;line-height:2;">
+  <div># Start the database (Docker, port 5433)</div>
+  <div>docker start painlab-db</div>
+  <div style="margin-top:0.5rem;"># Start the dev server</div>
+  <div>npm run dev</div>
+  <div style="margin-top:0.5rem;"># Open in browser</div>
+  <div>http://localhost:3000</div>
+</div>
+
+<hr class="section-divider" />
+<p style="font-size:0.75rem;color:#a8a29e;margin-top:1rem;">Generated by PainLab build process · devpost/app-map.html · Source of truth: devpost/spec.md</p>
+
+</body>
+</html>
