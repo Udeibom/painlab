@@ -24,6 +24,22 @@ export async function getHackathonContext(painCaseId: string) {
   });
 }
 
+export async function appendKilledApproaches(contextId: string, newApproaches: string[]) {
+  if (newApproaches.length === 0) return;
+  const current = await prisma.hackathonContext.findUnique({
+    where: { id: contextId },
+    select: { previousApproachesKilled: true },
+  });
+  const merged = [...(current?.previousApproachesKilled ?? []), ...newApproaches]
+    // deduplicate by keeping unique titles
+    .filter((v, i, a) => a.indexOf(v) === i)
+    .slice(-30); // cap at 30 to avoid prompt bloat
+  return prisma.hackathonContext.update({
+    where: { id: contextId },
+    data: { previousApproachesKilled: merged },
+  });
+}
+
 export async function saveJudgeProfile(
   hackathonContextId: string,
   data: {

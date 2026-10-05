@@ -27,7 +27,7 @@ import {
   addAgentStep,
   getShouldStop,
 } from "../services/agentRunService";
-import { saveJudgeProfile } from "../services/hackathonContextService";
+import { saveJudgeProfile, appendKilledApproaches } from "../services/hackathonContextService";
 import { createEvidence } from "../services/evidenceService";
 import { createObservation } from "../services/observationService";
 import { createHypothesis } from "../services/hypothesisService";
@@ -320,13 +320,16 @@ export async function runHackathonAgent(
     let allEvaluatedCandidates: EvaluatedCandidate[] = [];
     let allSurvivors: EvaluatedCandidate[] = [];
 
+    // Load previously killed approaches from this context (accumulated across all past runs)
+    const previousApproachesKilled: string[] = context.previousApproachesKilled ?? [];
+
     // Seed failure diagnosis for round 1 (empty — no previous round)
     let lastDiagnosis: FailureDiagnosis = {
       commonFailurePattern: "First round — no prior failures",
       falsifiedAssumption: "None yet",
       newResearchQuestions: [],
       newSearchQueries: [],
-      newAngle: "Start fresh from the Pain Map",
+      newAngle: "Start fresh from the Pain Map — use the workaroundSolution field as the starting point for every candidate",
     };
 
     for (let round = 1; round <= MAX_ROUNDS; round++) {
@@ -345,6 +348,7 @@ export async function runHackathonAgent(
             targetCommunity: community,
             hackathonConstraints: constraints,
             failureDiagnosis: lastDiagnosis,
+            previousApproachesKilled,
             maxCandidates: env.AGENT_MAX_CANDIDATES,
             roundNumber: round,
           }),
@@ -377,6 +381,7 @@ export async function runHackathonAgent(
             targetCommunity: community,
             hackathonConstraints: constraints,
             failureDiagnosis: lastDiagnosis,
+            previousApproachesKilled,
             maxCandidates: env.AGENT_MAX_CANDIDATES,
             roundNumber: round,
           }),
@@ -479,6 +484,13 @@ export async function runHackathonAgent(
 
       // If survivors found, we're done with the loop
       if (allSurvivors.length > 0) break;
+
+      // Append this round's killed approaches to the context (persists across future runs)
+      const killedThisRound = roundCandidates.filter(c => !c.survived);
+      const killedTitles = killedThisRound.map(c => c.title);
+      previousApproachesKilled.push(...killedTitles);
+      // Fire-and-forget — don't block the loop
+      void appendKilledApproaches(context.id, killedTitles).catch(() => {});
 
       // All killed this round — diagnose and prepare next round
       if (round < MAX_ROUNDS) {

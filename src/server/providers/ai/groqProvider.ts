@@ -171,34 +171,52 @@ Return JSON:
 
   async killRound(input: KillRoundInput): Promise<KillRoundResult> {
     const angleInstructions: Record<string, string> = {
-      user: "Attack from the perspective of the target user. Ask: Is the pain acute enough that someone would change their behavior for this? Does the solution address the specific workaround failure, or does it just add another layer on top of the existing problem? Be specific — generic criticisms like 'not specific enough' don't count. Name the exact flaw.",
-      technical: "Attack from a technical perspective. Can one developer realistically build a working demo of this in 48-72 hours? Is the core functionality achievable without external dependencies that would take days to integrate? Be specific about which part is infeasible and why. IMPORTANT: Do NOT claim that a specific API capability is unavailable unless you are certain. When in doubt about API capabilities, assume the platform's developer API likely exposes the needed data and focus your criticism on implementation complexity instead.",
-      judge: `Attack from the perspective of the judges. Based on these judge profiles: ${input.judgeProfile ?? "unknown judges"} — would they find this compelling, original, and credible? Does it make a specific case for a real problem? Be specific about what would concern these particular judges.`,
+      user: `USER ANGLE: Does this solve a real, acute pain for the specific target user?
+The question is: would the people described actually use this, given how they behave today?
+Look at the "current workaround" — does this solution make that workaround better, or does it ask users to change their entire behavior?
+A solution that improves existing behavior is easier to adopt than one that requires entirely new habits.
+VALID kill: the workaround this is based on doesn't actually exist, OR the improvement is so marginal users wouldn't bother switching.
+INVALID kill: "the problem isn't specific enough", "there's competition", "users might not trust it". These are not fatal flaws.`,
+
+      technical: `TECHNICAL ANGLE: Can one developer build a working demo of this in 48-72 hours?
+Focus on what's actually in scope for a hackathon demo — it doesn't need to be production-ready, it needs to DEMONSTRATE the core mechanic.
+IMPORTANT: Do NOT claim an API capability is unavailable unless you are certain. Payment platforms (PayPal, Stripe, etc.) expose extensive APIs. When uncertain, assume the data is available.
+VALID kill: the core mechanic requires a third-party integration that takes weeks to approve (e.g., bank partnerships), OR the fundamental compute requirement is impossible on free tiers.
+INVALID kill: "it would be complex to build", "it would need a lot of work", "it might not scale". These are engineering challenges, not fatal flaws for a hackathon demo.`,
+
+      judge: `JUDGE ANGLE: Based on these specific judges: ${input.judgeProfile ?? "unknown judges"}
+Would this project score well on: (1) technological implementation quality, (2) coherent product experience, (3) credible real-world impact, (4) novelty?
+The key question is: does it demonstrate something working end-to-end that a judge can actually interact with?
+VALID kill: the judges explicitly stated they don't want this type of project, OR the demo cannot show anything working in under 3 minutes.
+INVALID kill: "judges might prefer something else", "it's not the most innovative thing possible". These are subjective opinions, not fatal flaws.`,
     };
 
     const prompt = `
-You are running a kill-cycle evaluation on a hackathon solution candidate.
+Kill cycle evaluation — be a fair but demanding critic.
 
 Candidate: "${input.candidateTitle}"
 Description: ${input.candidateDescription}
-Problem it claims to solve: ${input.targetProblem}
+Specific problem it addresses: ${input.targetProblem}
 Hackathon constraints: ${input.hackathonConstraints}
-Evaluation angle: ${input.attackAngle}
 
+EVALUATION ANGLE: ${input.attackAngle}
 ${angleInstructions[input.attackAngle]}
 
-IMPORTANT verdict rules:
-- survived=false ONLY if there is a SPECIFIC, CONCRETE fatal flaw you can name precisely
-- survived=true if the candidate holds up reasonably well against this angle — it doesn't need to be perfect
-- "The problem isn't specific enough" is NOT a valid kill reason unless you explain exactly what specificity is missing and why it matters
-- A candidate that addresses a real, verifiable problem with a buildable solution should survive
+DECISION RULES:
+- survived=true if the candidate has no FATAL flaw from this specific angle
+- survived=false ONLY when you can name one CONCRETE, SPECIFIC fatal blocker
+- A fatal blocker is something that makes the product literally impossible to build or use — not something that makes it harder or less ideal
+- "The problem isn't acute enough" is NOT a fatal flaw unless you explain exactly why the user would never change their current behavior
+- "There's competition" is NEVER a fatal flaw
+- "It could be better" is NEVER a fatal flaw
+- Preference for a different approach is NEVER a fatal flaw
 
 Return JSON:
 {
   "attackAngle": "${input.attackAngle}",
-  "attack": "string (2-3 sentences: the specific, named criticism)",
+  "attack": "2-3 sentences: the specific named criticism from this angle",
   "survived": boolean,
-  "reason": "string (1-2 sentences: the precise reason it survived or the precise fatal flaw)"
+  "reason": "if survived=false: name the single concrete fatal blocker precisely. If survived=true: state why it passes this angle."
 }`.trim();
 
     return this.callJson<KillRoundResult>(SMART_MODEL, prompt, 500);
@@ -279,48 +297,47 @@ Return JSON with:
       .join("\n");
 
     const prompt = `
-You are building a Pain Map from real evidence about a community. Do NOT generate solutions yet.
-Your only job is to extract and structure the real pains, workarounds, and gaps that exist in the evidence.
+You are building a Pain Map from real evidence. Do NOT generate solutions yet.
+Extract real pains, workarounds, and gaps from the evidence.
 
 Target community: ${input.targetCommunity}
 Constraints: ${input.hackathonConstraints}
 
-Evidence excerpts (real sources — some are full page content):
+Evidence (real sources, some are full page content):
 ${excerptList}
 
-IMPORTANT: Extract specific, granular pains. Look for:
-- Quotes or specific complaints from real people
-- Specific workarounds people have invented (these reveal the real need)
-- Specific failures of existing solutions (not just "they don't work")
-- Recurring patterns across multiple sources
+WHAT TO LOOK FOR:
+- Specific complaints in people's own words
+- What people do RIGHT NOW to cope (the workaround) — this is the most important field
+- Why that workaround keeps failing them
+- What "making the workaround 10x better" would look like — fill workaroundSolution
 
-The "currentWorkaround" field is the most important — what do people actually do today?
-The "whyWorkaroundFails" field reveals the true gap.
+THE KEY INSIGHT: Real products come from improving existing behavior, not replacing it.
+If someone manually tracks payments in a spreadsheet, a 10x better version isn't "a new payment system" — it's "instant auto-reconciliation that does what the spreadsheet does, but without the manual work."
 
 Return JSON:
 {
   "pains": [
     {
-      "whoExactly": "specific sub-group (age, occupation, location, daily situation — quote evidence if possible)",
-      "whatHappens": "the concrete painful event or situation — be specific, cite the evidence",
+      "whoExactly": "specific sub-group with age/occupation/location (quote evidence if available)",
+      "whatHappens": "the concrete painful event — specific, cite evidence",
       "frequency": "daily / weekly / situational / seasonal",
-      "currentWorkaround": "what they actually do right now — look for informal systems, manual processes, peer networks",
-      "whyWorkaroundFails": "the specific way the workaround is inadequate — time, cost, trust, reliability, access",
-      "whoAlreadyTried": "organizations, apps, or programs that already tried to solve this",
-      "whyTheyFellShort": "specific reason existing solutions failed — too expensive, wrong channel, wrong language, trust issues",
-      "whatRemainsUnsolved": "the exact gap that persists",
-      "hardestConstraint": "the structural fact that makes this genuinely hard — infrastructure, trust, regulation, literacy"
+      "currentWorkaround": "what they actually do now — name the exact informal system or manual process",
+      "whyWorkaroundFails": "what specifically breaks down — time cost, trust gap, error rate, access barrier",
+      "workaroundSolution": "if we made this workaround 10x better/faster/cheaper/more reliable, what would it look like? Describe the minimum viable improvement, not a new product from scratch.",
+      "whoAlreadyTried": "apps, orgs, or products that already tried to solve this",
+      "whyTheyFellShort": "specific reason they failed — wrong price, wrong channel, wrong language, assumed infrastructure",
+      "whatRemainsUnsolved": "the exact gap that still exists after all existing solutions",
+      "hardestConstraint": "the one structural fact that makes this hard — regulation, trust, infrastructure, literacy"
     }
   ],
-  "dominantPattern": "1-2 sentences: what does ALL this evidence actually show?",
-  "mostPromisingAngle": "which pain entry has the most tractable gap, and why a payment/AI solution could close it"
+  "dominantPattern": "1-2 sentences: what do ALL these sources actually show?",
+  "mostPromisingAngle": "which pain's workaroundSolution is most tractable for a hackathon, and why"
 }
 
-Identify 2-3 distinct pain entries. Only extract what is grounded in the evidence.
-Keep each field concise — 1-2 sentences maximum.`.trim();
+2-3 pain entries only. Every field must be grounded in the evidence. 1-2 sentences max per field.`.trim();
 
     const result = await this.callJson<PainMap>(SMART_MODEL, prompt, 2400);
-    // Ensure pains is always an array
     return { ...result, pains: result.pains ?? [] };
   }
 
@@ -391,57 +408,67 @@ Return JSON:
   What happens: ${p.whatHappens}
   Current workaround: ${p.currentWorkaround}
   Why workaround fails: ${p.whyWorkaroundFails}
+  If workaround was 10x better: ${p.workaroundSolution ?? "not yet defined"}
   Already tried: ${p.whoAlreadyTried} — fell short because: ${p.whyTheyFellShort}
   Remaining gap: ${p.whatRemainsUnsolved}
   Hardest constraint: ${p.hardestConstraint}`)
       .join("\n\n");
 
+    const previouslyKilled = input.previousApproachesKilled.length > 0
+      ? `\nAPPROACHES ALREADY TRIED AND KILLED (do not repeat these shapes):\n${input.previousApproachesKilled.map(a => `- ${a}`).join("\n")}`
+      : "";
+
+    const failureContext = input.roundNumber > 1
+      ? `\nLAST ROUND FAILURE PATTERN: ${input.failureDiagnosis.commonFailurePattern}
+WHAT THE EVIDENCE ACTUALLY SHOWS: ${input.failureDiagnosis.falsifiedAssumption}
+NEW ANGLE TO TRY: ${input.failureDiagnosis.newAngle}`
+      : "";
+
     const prompt = `
-You are generating hackathon solution candidates. This is round ${input.roundNumber} of investigation.
+You are generating hackathon candidates. Round ${input.roundNumber}.
 
-IMPORTANT — what failed in previous rounds:
-${input.failureDiagnosis.commonFailurePattern}
+THE RULE FOR THIS ROUND:
+Every candidate must START from the "If workaround was 10x better" field in the Pain Map.
+Do NOT invent a new product category. Take what people already do and make it dramatically better.
 
-What that revealed:
-${input.failureDiagnosis.falsifiedAssumption}
-
-The new angle to try:
-${input.failureDiagnosis.newAngle}
+Example of the right thinking:
+- People manually reconcile PayPal fees in spreadsheets → "10x better" = app that does it automatically using PayPal's seller_receivable_breakdown API
+- People ask friends for money exchange advice → "10x better" = AI that gives the same advice instantly, using real rate data
+- People screenshot payment proofs and send via WhatsApp → "10x better" = auto-generates and sends a verified payment receipt via the same channel
 
 Target community: ${input.targetCommunity}
 Hackathon constraints: ${input.hackathonConstraints}
+${failureContext}
+${previouslyKilled}
 
-Structured Pain Map (each entry is a real, evidence-grounded pain):
+Pain Map:
 ${painList}
 
-Most promising angle identified: ${input.painMap.mostPromisingAngle}
+Most promising direction: ${input.painMap.mostPromisingAngle}
 
-Rules for this round:
-- Each candidate MUST trace to a specific Pain entry (cite Pain 0, Pain 1, etc.)
-- Each candidate MUST explain how it addresses the specific workaround failure, not just the general problem
-- Do NOT repeat approaches that were killed in previous rounds — find a genuinely different angle
-- If previous rounds failed on regulatory/API constraints, try a different aspect of the problem entirely
-- Focus especially on the new angle above
-- Solutions must be buildable by one developer in a hackathon
-- Prefer solutions that USE the platform's existing capabilities rather than trying to work around its limitations
+GENERATION RULES:
+1. Each candidate must cite which Pain entry it comes from (Pain 0, Pain 1, etc.)
+2. Each candidate must explicitly state: "The current workaround is X. This makes it 10x better by doing Y."
+3. The solution must be buildable as a working demo by one developer in 48-72 hours
+4. It must use the platform's EXISTING API capabilities — not try to bypass limitations
+5. Do NOT generate anything that appears in the "already killed" list above
+6. Small, focused, specific > ambitious, broad, generic
 
-Generate exactly ${input.maxCandidates > 3 ? 3 : input.maxCandidates} candidates.
+Generate exactly ${Math.min(input.maxCandidates, 3)} candidates.
 
 Return JSON:
 {
   "candidates": [
     {
-      "title": "string (max 8 words)",
-      "description": "string (2-3 sentences: what it does, who specifically uses it, what pain entry it addresses)",
-      "targetProblem": "string (cite Pain N — specific problem from the pain map)",
-      "groundedIn": ["Pain 0", "Pain 2"]
+      "title": "string (max 8 words — specific, not generic)",
+      "description": "string: 'The current workaround is [X]. This makes it 10x better by [Y]. Specifically it does [Z] for [who].'",
+      "targetProblem": "Pain [N]: [the specific workaround failure this addresses]",
+      "groundedIn": ["Pain 0"]
     }
   ]
 }`.trim();
 
-    const result = await this.callJson<{ candidates: GeneratedCandidate[] }>(
-      SMART_MODEL, prompt, 1400
-    );
+    const result = await this.callJson<{ candidates: GeneratedCandidate[] }>(SMART_MODEL, prompt, 1400);
     return result.candidates ?? [];
   }
 

@@ -193,6 +193,7 @@ model HackathonContext {
   judges          String[]
   targetCommunity String
   constraints     String?
+  previousApproachesKilled String[] @default([]) // accumulates across runs so each new run avoids repeating them
   createdAt       DateTime @default(now())
 
   judgeProfiles JudgeProfile[]

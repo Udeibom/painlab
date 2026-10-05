@@ -15,8 +15,7 @@ export class NullAiProvider implements AiProvider {
   async generateFromPainMap(_: GenerateFromPainMapInput): Promise<GeneratedCandidate[]> { return []; }
   async buildPainMap(_: BuildPainMapInput): Promise<PainMap> {
     return { pains: [], dominantPattern: "", mostPromisingAngle: "" };
-  }
-  async diagnoseFailures(_: DiagnoseFailuresInput): Promise<FailureDiagnosis> {
+  }  async diagnoseFailures(_: DiagnoseFailuresInput): Promise<FailureDiagnosis> {
     return { commonFailurePattern: "", falsifiedAssumption: "", newResearchQuestions: [], newSearchQueries: [], newAngle: "" };
   }
   async killRound(_: KillRoundInput): Promise<KillRoundResult> {

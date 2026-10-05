@@ -137,6 +137,7 @@ export interface PainMapEntry {
   frequency: string;           // daily / weekly / situational
   currentWorkaround: string;   // what they actually do now — KEY field
   whyWorkaroundFails: string;  // the gap the workaround doesn't close
+  workaroundSolution: string;  // if we made the workaround 10x better, what would that look like?
   whoAlreadyTried: string;     // existing solutions / competitors
   whyTheyFellShort: string;    // specific reason existing solutions failed
   whatRemainsUnsolved: string; // the residual gap
@@ -174,7 +175,8 @@ export interface GenerateFromPainMapInput {
   painMap: PainMap;
   targetCommunity: string;
   hackathonConstraints: string;
-  failureDiagnosis: FailureDiagnosis; // what failed last round and why
+  failureDiagnosis: FailureDiagnosis;
+  previousApproachesKilled: string[]; // accumulated across ALL runs, not just this one
   maxCandidates: number;
   roundNumber: number;
 }
