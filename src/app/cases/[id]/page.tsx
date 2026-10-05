@@ -3,7 +3,7 @@ import { getCaseWithEntries } from "@/server/services/painCaseService";
 import { CurrentStatePanel } from "@/components/investigation/CurrentStatePanel";
 import { InvestigationTimeline } from "@/components/investigation/InvestigationTimeline";
 import { AddToInvestigation } from "@/components/investigation/AddToInvestigation";
-import { AgentProgressPanel } from "@/components/investigation/AgentProgressPanel";
+import { AgentSidePanel } from "@/components/investigation/AgentSidePanel";
 import { CaseEditButton } from "@/components/pain-case/CaseEditButton";
 import { Badge } from "@/components/ui/Badge";
 import Link from "next/link";
@@ -72,13 +72,7 @@ export default async function CaseDetailPage({
           {isAgentRunning && latestRun ? (
             <>
               <h2 className="mb-4 text-sm font-semibold text-stone-700">Agent Progress</h2>
-              <AgentProgressPanel
-                agentRunId={latestRun.id}
-                onComplete={() => {
-                  // Reload to show Current State panel once agent finishes
-                  if (typeof window !== "undefined") window.location.reload();
-                }}
-              />
+              <AgentSidePanel agentRunId={latestRun.id} />
             </>
           ) : (
             <>
