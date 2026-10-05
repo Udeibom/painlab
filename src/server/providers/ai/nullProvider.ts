@@ -1,28 +1,23 @@
 // NullAiProvider — no-op satisfying the AiProvider interface.
-// Used as default so the codebase compiles cleanly without keys.
-
 import type {
-  AiProvider,
-  StructurePainCaseInput,
-  StructuredPainCaseOutput,
-  GenerateCandidatesInput,
-  GeneratedCandidate,
-  KillRoundInput,
-  KillRoundResult,
-  JudgeProfileInput,
-  JudgeProfileOutput,
-  ExtractFindingsInput,
-  StructuredFindings,
-  SummarizeEvidenceInput,
-  EvidenceSummary,
+  AiProvider, StructurePainCaseInput, StructuredPainCaseOutput,
+  GenerateCandidatesInput, GeneratedCandidate, GenerateFromPainMapInput,
+  BuildPainMapInput, PainMap, DiagnoseFailuresInput, FailureDiagnosis,
+  KillRoundInput, KillRoundResult, JudgeProfileInput, JudgeProfileOutput,
+  ExtractFindingsInput, StructuredFindings, SummarizeEvidenceInput, EvidenceSummary,
 } from "./types";
 
 export class NullAiProvider implements AiProvider {
   async structurePainCase(_: StructurePainCaseInput): Promise<StructuredPainCaseOutput> {
     return { title: "", description: "", tags: [], searchQueries: [] };
   }
-  async generateCandidates(_: GenerateCandidatesInput): Promise<GeneratedCandidate[]> {
-    return [];
+  async generateCandidates(_: GenerateCandidatesInput): Promise<GeneratedCandidate[]> { return []; }
+  async generateFromPainMap(_: GenerateFromPainMapInput): Promise<GeneratedCandidate[]> { return []; }
+  async buildPainMap(_: BuildPainMapInput): Promise<PainMap> {
+    return { pains: [], dominantPattern: "", mostPromisingAngle: "" };
+  }
+  async diagnoseFailures(_: DiagnoseFailuresInput): Promise<FailureDiagnosis> {
+    return { commonFailurePattern: "", falsifiedAssumption: "", newResearchQuestions: [], newSearchQueries: [], newAngle: "" };
   }
   async killRound(_: KillRoundInput): Promise<KillRoundResult> {
     return { attackAngle: "user", attack: "", survived: false, reason: "Null provider" };

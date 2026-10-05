@@ -123,11 +123,70 @@ export interface EvidenceSummary {
   disagreements: string[];
 }
 
+// ── buildPainMap ──────────────────────────────────────────────────────────────
+
+export interface BuildPainMapInput {
+  targetCommunity: string;
+  evidenceExcerpts: string[]; // raw search results
+  hackathonConstraints: string;
+}
+
+export interface PainMapEntry {
+  whoExactly: string;          // specific sub-group, not just the community
+  whatHappens: string;         // the concrete pain event
+  frequency: string;           // daily / weekly / situational
+  currentWorkaround: string;   // what they actually do now — KEY field
+  whyWorkaroundFails: string;  // the gap the workaround doesn't close
+  whoAlreadyTried: string;     // existing solutions / competitors
+  whyTheyFellShort: string;    // specific reason existing solutions failed
+  whatRemainsUnsolved: string; // the residual gap
+  hardestConstraint: string;   // the structural thing that makes this hard
+}
+
+export interface PainMap {
+  pains: PainMapEntry[];
+  dominantPattern: string;     // 1-2 sentence synthesis of what the evidence actually shows
+  mostPromisingAngle: string;  // which pain entry looks most tractable and why
+}
+
+// ── diagnoseFailures ──────────────────────────────────────────────────────────
+
+export interface DiagnoseFailuresInput {
+  killedCandidates: {
+    title: string;
+    eliminationReason: string;
+  }[];
+  targetCommunity: string;
+  painMap: PainMap;
+}
+
+export interface FailureDiagnosis {
+  commonFailurePattern: string;  // what assumption all killed candidates shared
+  falsifiedAssumption: string;   // what the evidence actually says about that assumption
+  newResearchQuestions: string[]; // 3-4 targeted questions to answer before next round
+  newSearchQueries: string[];     // 4-6 specific queries to find what was missing
+  newAngle: string;               // 1-sentence description of the different approach to try
+}
+
+// ── generateFromPainMap ───────────────────────────────────────────────────────
+
+export interface GenerateFromPainMapInput {
+  painMap: PainMap;
+  targetCommunity: string;
+  hackathonConstraints: string;
+  failureDiagnosis: FailureDiagnosis; // what failed last round and why
+  maxCandidates: number;
+  roundNumber: number;
+}
+
 // ── AiProvider interface ──────────────────────────────────────────────────────
 
 export interface AiProvider {
   structurePainCase(input: StructurePainCaseInput): Promise<StructuredPainCaseOutput>;
   generateCandidates(input: GenerateCandidatesInput): Promise<GeneratedCandidate[]>;
+  generateFromPainMap(input: GenerateFromPainMapInput): Promise<GeneratedCandidate[]>;
+  buildPainMap(input: BuildPainMapInput): Promise<PainMap>;
+  diagnoseFailures(input: DiagnoseFailuresInput): Promise<FailureDiagnosis>;
   killRound(input: KillRoundInput): Promise<KillRoundResult>;
   synthesizeJudgeProfile(input: JudgeProfileInput): Promise<JudgeProfileOutput>;
   extractStructuredFindings(input: ExtractFindingsInput): Promise<StructuredFindings>;

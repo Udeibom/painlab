@@ -1,20 +1,24 @@
 /**
- * PainLab Hackathon Agent — main orchestrator.
+ * PainLab Hackathon Agent — v2 orchestrator
  *
- * 6-phase autonomous research and idea-validation loop:
- *   Phase 1 — Brief analysis → search queries
- *   Phase 2 — Community need discovery (web + reddit search)
- *   Phase 3 — Judge profiling (public posts inference)
- *   Phase 4 — Candidate generation (grounded in real evidence)
- *   Phase 5 — Kill cycle (user / technical / judge angles)
- *   Phase 6 — Conclude (surface survivors, or report KILLED_ALL honestly)
+ * Architecture: Pain Map + Iterative Kill→Learn→Regenerate loop (max 3 rounds)
  *
- * Design rules (from spec-v2-agent-layer.md):
- * - Stateless and resumable: every step writes to AgentStep before and after.
- * - AI output is ALWAYS labeled source=AI. Never attributed to the user.
- * - KILLED_ALL is an honest outcome. No manufactured fallback winner.
- * - Token efficiency: max_tokens set on every LLM call, fast model for simple tasks.
- * - Stop requested: checked at the start of every phase.
+ * Phase 1  — Brief analysis + adversarial search query generation
+ * Phase 2  — Community need discovery (deep, adversarial queries)
+ * Phase 3  — Judge profiling
+ * Phase 4  — Pain Map construction (WHO, WHAT, WORKAROUND, WHY IT FAILS, GAP)
+ * Phase 5+ — Per-round loop (max MAX_ROUNDS):
+ *               Generate from Pain Map → Kill cycle
+ *               If all killed: Diagnose failures → new search queries → more research → next round
+ *               If survivors: go to Phase 6
+ * Phase 6  — Conclude (surface survivors or honest KILLED_ALL with full trail)
+ *
+ * Design invariants (see spec-v2-agent-layer.md):
+ * - Every step is written to AgentStep before+after — fully auditable
+ * - All AI output labeled source=AI / createdBy=AI — never attributed to user
+ * - KILLED_ALL is an honest final outcome — no manufactured fallback
+ * - Stop-check between every phase — user can abort gracefully
+ * - max_tokens set on every LLM call — token budget is respected
  */
 
 import { prisma } from "../db";
@@ -28,10 +32,12 @@ import { createEvidence } from "../services/evidenceService";
 import { createObservation } from "../services/observationService";
 import { createHypothesis } from "../services/hypothesisService";
 import { createLearning } from "../services/learningService";
-import type { AiProvider } from "../providers/ai/types";
+import type { AiProvider, PainMap, FailureDiagnosis } from "../providers/ai/types";
 import type { TavilyResearchProvider } from "../providers/research/tavilyProvider";
 import type { HackathonContext, Confidence } from "@prisma/client";
 import { env } from "../config";
+
+const MAX_ROUNDS = 3;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -66,8 +72,6 @@ export async function runHackathonAgent(
 ): Promise<void> {
   let stepNumber = 0;
 
-  // Helper: write a step record to the DB before and after work.
-  // Returns whatever the work fn produces.
   async function step<T>(
     stepType: string,
     description: string,
@@ -81,7 +85,6 @@ export async function runHackathonAgent(
       description,
       inputJson: inputSummary ? inputSummary.slice(0, 500) : undefined,
     });
-
     try {
       const result = await work();
       await prisma.agentStep.update({
@@ -96,10 +99,7 @@ export async function runHackathonAgent(
       const msg = err instanceof Error ? err.message : String(err);
       await prisma.agentStep.update({
         where: { id: stepRecord.id },
-        data: {
-          outputJson: JSON.stringify({ error: msg }).slice(0, 500),
-          durationMs: Date.now() - start,
-        },
+        data: { outputJson: JSON.stringify({ error: msg }).slice(0, 500), durationMs: Date.now() - start },
       });
       throw err;
     }
@@ -109,117 +109,125 @@ export async function runHackathonAgent(
     return getShouldStop(agentRunId);
   }
 
-  try {
-    // ── Phase 1: Brief analysis → search queries ────────────────────────────
+  // Dedup evidence by URL across all rounds
+  const seenUrls = new Set<string>();
 
-    const structured = await step(
-      "GENERATE",
-      "Analysing hackathon brief and generating community-need search queries",
-      () =>
-        ai.structurePainCase({
-          freeformDescription: context.hackathonBrief,
-          targetCommunity: context.targetCommunity,
-          hackathonBrief: context.hackathonBrief,
-        }),
-      `community: ${context.targetCommunity}`,
-    );
-
-    // Update the Pain Case title/description if the AI produced better ones
-    if (structured.title && structured.description) {
-      await prisma.painCase.update({
-        where: { id: context.painCaseId },
-        data: {
-          title: structured.title,
-          description: structured.description,
-          tags: structured.tags ?? [],
-        },
-      });
-    }
-
-    const searchQueries: string[] = [
-      ...(structured.searchQueries ?? []),
-      // Always add a direct community + needs query as a safety net
-      `${context.targetCommunity} problems challenges needs`,
-    ].slice(0, env.AGENT_SEARCH_DEPTH);
-
-    if (await checkStop()) return await abort(agentRunId, "Stopped by user after Phase 1");
-
-    // ── Phase 2: Community need discovery ──────────────────────────────────
-
-    const allEvidence: {
-      title: string;
-      url: string;
-      snippet: string;
-      sourceType: string;
-    }[] = [];
-
-    for (const query of searchQueries.slice(0, 5)) {
-      const results = await step(
-        "SEARCH",
-        `Web search: "${query}"`,
-        () => research.findEvidence({ query, maxResults: 5 }),
-        query,
-      );
-      allEvidence.push(...results.map((r) => ({ ...r, sourceType: r.sourceType ?? "WEB" })));
-
-      // Also search Reddit via Tavily
-      const redditResults = await step(
-        "SEARCH",
-        `Reddit search: "${query}"`,
-        () => research.searchReddit(query),
-        `reddit: ${query}`,
-      );
-      allEvidence.push(...redditResults.map((r) => ({ ...r, sourceType: "REDDIT" })));
-    }
-
-    // Deduplicate by URL
-    const seen = new Set<string>();
-    const uniqueEvidence = allEvidence.filter((e) => {
-      if (seen.has(e.url)) return false;
-      seen.add(e.url);
-      return true;
-    });
-
-    // Save top evidence items to the Pain Case (labeled AI-sourced)
-    const topEvidence = uniqueEvidence.slice(0, 12);
-    for (const ev of topEvidence) {
+  // Save evidence items to DB, skip already-seen URLs
+  async function saveNewEvidence(items: { title: string; url: string; snippet: string; sourceType: string }[]) {
+    const fresh = items.filter(e => !seenUrls.has(e.url));
+    for (const ev of fresh) {
+      seenUrls.add(ev.url);
       try {
         await createEvidence({
           painCaseId: context.painCaseId,
           title: ev.title.slice(0, 200),
           claim: ev.snippet.slice(0, 500),
           source: ev.url,
-          sourceType: (ev.sourceType as "WEB" | "REDDIT" | "ARTICLE" | "PAPER" | "VIDEO" | "FORUM" | "DOCS" | "OTHER") ?? "WEB",
+          sourceType: (ev.sourceType as "WEB" | "REDDIT" | "ARTICLE" | "PAPER" | "VIDEO" | "FORUM" | "DOCS" | "OTHER"),
           url: ev.url,
           excerpt: ev.snippet.slice(0, 500),
           addedBy: "AI",
         });
-      } catch {
-        // Non-fatal — continue if one evidence item fails to save
+      } catch { /* non-fatal */ }
+    }
+    return fresh.length;
+  }
+
+  try {
+    // ── Phase 1: Brief analysis + adversarial query generation ────────────────
+    // Generate not just "find needs" queries but also workaround queries,
+    // "why existing solutions failed" queries, and constraint queries.
+
+    const structured = await step(
+      "GENERATE",
+      "Analysing brief, generating standard + adversarial search queries",
+      () => ai.structurePainCase({
+        freeformDescription: context.hackathonBrief,
+        targetCommunity: context.targetCommunity,
+        hackathonBrief: context.hackathonBrief,
+      }),
+      `community: ${context.targetCommunity}`,
+    );
+
+    if (structured.title && structured.description) {
+      await prisma.painCase.update({
+        where: { id: context.painCaseId },
+        data: { title: structured.title, description: structured.description, tags: structured.tags ?? [] },
+      });
+    }
+
+    // Standard queries + adversarial queries built from the community name
+    const community = context.targetCommunity;
+    const adversarialQueries = [
+      `${community} problems complaints daily life`,
+      `${community} what do they currently use instead`,
+      `why do solutions for ${community} fail`,
+      `${community} workaround informal system`,
+      `${community} ignored neglected needs overlooked`,
+      `existing apps services for ${community} problems shortcomings`,
+    ];
+
+    const allQueries = [
+      ...(structured.searchQueries ?? []),
+      ...adversarialQueries,
+    ].slice(0, env.AGENT_SEARCH_DEPTH);
+
+    if (await checkStop()) return await abort(agentRunId, "Stopped by user after Phase 1");
+
+    // ── Phase 2: Deep community need discovery ────────────────────────────────
+    // Run all queries including adversarial ones, dedup, save to DB
+
+    const allEvidence: { title: string; url: string; snippet: string; sourceType: string }[] = [];
+
+    for (const query of allQueries.slice(0, 8)) {
+      const results = await step(
+        "SEARCH",
+        `Searching: "${query}"`,
+        () => research.findEvidence({ query, maxResults: 5 }),
+        query,
+      );
+      allEvidence.push(...results.map(r => ({ ...r, sourceType: r.sourceType ?? "WEB" })));
+
+      // Reddit via Tavily for community queries
+      if (query.includes(community.split(" ")[0] ?? "")) {
+        const redditResults = await step(
+          "SEARCH",
+          `Reddit: "${query}"`,
+          () => research.searchReddit(query),
+          `reddit:${query}`,
+        );
+        allEvidence.push(...redditResults.map(r => ({ ...r, sourceType: "REDDIT" })));
       }
     }
 
-    // Save a top-level observation summarising what was found
+    // Dedup
+    const seen = new Set<string>();
+    const uniqueEvidence = allEvidence.filter(e => {
+      if (seen.has(e.url)) return false;
+      seen.add(e.url);
+      return true;
+    });
+
+    const savedCount = await saveNewEvidence(uniqueEvidence.slice(0, 15));
+
     await createObservation({
       painCaseId: context.painCaseId,
-      content: `Agent found ${uniqueEvidence.length} sources covering needs of ${context.targetCommunity}. Top signal came from: ${topEvidence.slice(0, 3).map((e) => e.title).join("; ")}.`,
-      context: "Automatically generated by PainLab agent — verify sources before treating as fact",
+      content: `Agent searched ${allQueries.slice(0, 8).length} queries (including adversarial) and found ${uniqueEvidence.length} unique sources for "${community}". Saved ${savedCount} evidence items.`,
+      context: "Auto-generated by PainLab agent — verify sources",
     });
 
     if (await checkStop()) return await abort(agentRunId, "Stopped by user after Phase 2");
 
-    // ── Phase 3: Judge profiling ─────────────────────────────────────────────
+    // ── Phase 3: Judge profiling ───────────────────────────────────────────────
 
     const judgeProfileTexts: string[] = [];
 
     for (const judgeName of context.judges.slice(0, 4)) {
-      const judgeQuery = `${judgeName} hackathon judging OR product evaluation OR innovation`;
-
       const judgeResults = await step(
         "JUDGE_PROFILE",
         `Searching public content for judge: ${judgeName}`,
-        () => research.findEvidence({ query: judgeQuery, maxResults: 4 }),
-        judgeQuery,
+        () => research.findEvidence({ query: `${judgeName} hackathon judging innovation product`, maxResults: 4 }),
+        judgeName,
       );
 
       if (judgeResults.length === 0) {
@@ -227,194 +235,262 @@ export async function runHackathonAgent(
         continue;
       }
 
-      // Read the top page for richer content
       const topUrl = judgeResults[0]?.url;
       let fullContent = "";
       if (topUrl) {
         fullContent = await step(
           "READ_URL",
-          `Reading page for judge ${judgeName}: ${topUrl.slice(0, 60)}...`,
+          `Reading page for ${judgeName}: ${topUrl.slice(0, 60)}...`,
           () => research.readPage(topUrl),
           topUrl,
         );
       }
 
-      const excerpts = [
-        ...judgeResults.map((r) => r.snippet),
-        ...(fullContent ? [fullContent.slice(0, 600)] : []),
-      ].filter(Boolean);
+      const excerpts = [...judgeResults.map(r => r.snippet), ...(fullContent ? [fullContent.slice(0, 600)] : [])].filter(Boolean);
 
       const profile = await step(
         "JUDGE_PROFILE",
-        `Synthesising profile for judge: ${judgeName}`,
+        `Synthesising profile for: ${judgeName}`,
         () => ai.synthesizeJudgeProfile({ judgeName, excerpts }),
         `${judgeName}: ${excerpts.length} excerpts`,
       );
 
-      // Save to DB
       await saveJudgeProfile(context.id, {
         judgeName,
-        sourceUrls: judgeResults.map((r) => r.url),
+        sourceUrls: judgeResults.map(r => r.url),
         inferredValues: profile.inferredValues,
         inferredPreferences: profile.inferredPreferences,
         rawExcerpts: excerpts.slice(0, 4),
         confidence: (profile.confidence as Confidence) ?? "LOW",
       });
 
-      judgeProfileTexts.push(
-        `${judgeName}: ${profile.inferredPreferences} (confidence: ${profile.confidence})`,
-      );
+      judgeProfileTexts.push(`${judgeName}: ${profile.inferredPreferences} (confidence: ${profile.confidence})`);
     }
 
     const combinedJudgeProfile = judgeProfileTexts.join("\n");
 
     if (await checkStop()) return await abort(agentRunId, "Stopped by user after Phase 3");
 
-    // ── Phase 4: Candidate generation ────────────────────────────────────────
+    // ── Phase 4: Pain Map construction ────────────────────────────────────────
+    // Build the structured pain map BEFORE generating any solutions.
+    // This is the key step that separates observation from solution generation.
 
-    const evidenceExcerpts = topEvidence.map(
-      (e) => `${e.title}: ${e.snippet}`,
-    );
+    const constraints = [context.constraints ?? "", `Hackathon: ${context.hackathonName}`, "Solo developer, hackathon timeframe"].filter(Boolean).join(". ");
+    const evidenceExcerpts = uniqueEvidence.slice(0, 15).map(e => `${e.title}: ${e.snippet}`);
 
-    const constraints = [
-      context.constraints ?? "",
-      `Hackathon: ${context.hackathonName}`,
-      "Solo developer, hackathon timeframe",
-    ]
-      .filter(Boolean)
-      .join(". ");
-
-    const candidates = await step(
+    const painMap = await step(
       "GENERATE",
-      `Generating ${env.AGENT_MAX_CANDIDATES} candidate solutions grounded in evidence`,
-      () =>
-        ai.generateCandidates({
-          targetCommunity: context.targetCommunity,
-          evidenceExcerpts,
-          hackathonConstraints: constraints,
-          maxCandidates: env.AGENT_MAX_CANDIDATES,
-        }),
-      `${evidenceExcerpts.length} evidence excerpts`,
+      "Building Pain Map: who, what, workaround, why workaround fails, gap",
+      () => ai.buildPainMap({ targetCommunity: community, evidenceExcerpts, hackathonConstraints: constraints }),
+      `${evidenceExcerpts.length} excerpts`,
     );
 
-    if (!candidates.length) {
-      return await conclude(agentRunId, context.painCaseId, [], ai, "Agent could not generate candidates from the available evidence. Try broadening the target community description.");
-    }
+    // Persist pain map on the run record
+    await updateAgentRun(agentRunId, { painMap: painMap as unknown as import("@prisma/client").Prisma.InputJsonValue });
 
-    // Save initial candidate records
-    const savedCandidates: EvaluatedCandidate[] = [];
-    for (const c of candidates) {
-      const sources = (c.groundedIn ?? [])
-        .map((i) => topEvidence[parseInt(i)]?.url)
-        .filter((u): u is string => Boolean(u));
-
-      savedCandidates.push({
-        title: c.title,
-        description: c.description,
-        targetProblem: c.targetProblem,
-        evidenceSources: sources,
-        killRounds: [],
-        survived: false,
-      });
+    if (!painMap.pains || painMap.pains.length === 0) {
+      return await conclude(agentRunId, context.painCaseId, [], ai, context,
+        "Agent could not extract distinct pains from evidence. The community description may be too broad — try being more specific about who exactly and what exactly.");
     }
 
     if (await checkStop()) return await abort(agentRunId, "Stopped by user after Phase 4");
 
-    // ── Phase 5: Kill cycle ───────────────────────────────────────────────────
+    // ── Phase 5+: Iterative generate → kill → diagnose → research → regenerate
 
-    const angles: Array<"user" | "technical" | "judge"> = [
-      "user",
-      "technical",
-      "judge",
-    ].slice(0, env.AGENT_KILL_ROUNDS) as Array<"user" | "technical" | "judge">;
+    let allEvaluatedCandidates: EvaluatedCandidate[] = [];
+    let allSurvivors: EvaluatedCandidate[] = [];
 
-    let candidatesEvaluated = 0;
-    let candidatesSurvived = 0;
+    // Seed failure diagnosis for round 1 (empty — no previous round)
+    let lastDiagnosis: FailureDiagnosis = {
+      commonFailurePattern: "First round — no prior failures",
+      falsifiedAssumption: "None yet",
+      newResearchQuestions: [],
+      newSearchQueries: [],
+      newAngle: "Start fresh from the Pain Map",
+    };
 
-    for (const candidate of savedCandidates) {
-      candidatesEvaluated++;
-      let stillAlive = true;
+    for (let round = 1; round <= MAX_ROUNDS; round++) {
+      if (await checkStop()) return await abort(agentRunId, `Stopped by user at start of round ${round}`);
 
-      for (let round = 0; round < angles.length; round++) {
-        if (!stillAlive) break;
-        if (await checkStop()) return await abort(agentRunId, "Stopped by user during kill cycle");
+      await updateAgentRun(agentRunId, { investigationRound: round });
 
-        const angle = angles[round]!;
-        const killResult = await step(
-          "CRITICIZE",
-          `Kill round ${round + 1}/${angles.length} — "${candidate.title}" — angle: ${angle}`,
-          () =>
-            ai.killRound({
+      // ── Generate candidates (round 1: from raw evidence; rounds 2+: from pain map + diagnosis)
+      let candidates;
+      if (round === 1) {
+        candidates = await step(
+          "GENERATE",
+          `Round ${round}: generating ${env.AGENT_MAX_CANDIDATES} candidates from Pain Map`,
+          () => ai.generateFromPainMap({
+            painMap,
+            targetCommunity: community,
+            hackathonConstraints: constraints,
+            failureDiagnosis: lastDiagnosis,
+            maxCandidates: env.AGENT_MAX_CANDIDATES,
+            roundNumber: round,
+          }),
+          `round ${round}, pain map has ${painMap.pains.length} entries`,
+        );
+      } else {
+        // Subsequent rounds: search the new queries from the diagnosis first
+        if (lastDiagnosis.newSearchQueries.length > 0) {
+          for (const query of lastDiagnosis.newSearchQueries.slice(0, 4)) {
+            const newResults = await step(
+              "SEARCH",
+              `Round ${round} targeted search: "${query}"`,
+              () => research.findEvidence({ query, maxResults: 5 }),
+              query,
+            );
+            const freshCount = await saveNewEvidence(newResults.map(r => ({ ...r, sourceType: r.sourceType ?? "WEB" })));
+            // Add new evidence to our working set for generation
+            evidenceExcerpts.push(...newResults.slice(0, 3).map(r => `${r.title}: ${r.snippet}`));
+            if (freshCount > 0) {
+              // Note: no observation spam — just log in the step
+            }
+          }
+        }
+
+        candidates = await step(
+          "GENERATE",
+          `Round ${round}: generating ${env.AGENT_MAX_CANDIDATES} candidates from updated Pain Map (new angle: ${lastDiagnosis.newAngle.slice(0, 60)})`,
+          () => ai.generateFromPainMap({
+            painMap,
+            targetCommunity: community,
+            hackathonConstraints: constraints,
+            failureDiagnosis: lastDiagnosis,
+            maxCandidates: env.AGENT_MAX_CANDIDATES,
+            roundNumber: round,
+          }),
+          `round ${round}, angle: ${lastDiagnosis.newAngle.slice(0, 80)}`,
+        );
+      }
+
+      if (!candidates || candidates.length === 0) {
+        // LLM couldn't generate — move on
+        break;
+      }
+
+      // ── Kill cycle for this round's candidates
+      const roundCandidates: EvaluatedCandidate[] = [];
+      const angles: Array<"user" | "technical" | "judge"> = ["user", "technical", "judge"].slice(0, env.AGENT_KILL_ROUNDS) as Array<"user" | "technical" | "judge">;
+
+      for (const candidate of candidates) {
+        if (await checkStop()) return await abort(agentRunId, `Stopped by user during kill cycle round ${round}`);
+
+        const evaluated: EvaluatedCandidate = {
+          title: candidate.title,
+          description: candidate.description,
+          targetProblem: candidate.targetProblem,
+          evidenceSources: (candidate.groundedIn ?? []).map(g => String(g)),
+          killRounds: [],
+          survived: false,
+        };
+
+        let stillAlive = true;
+        for (let angleIdx = 0; angleIdx < angles.length; angleIdx++) {
+          if (!stillAlive) break;
+          const angle = angles[angleIdx]!;
+
+          const killResult = await step(
+            "CRITICIZE",
+            `Round ${round} kill — "${candidate.title}" — ${angle}`,
+            () => ai.killRound({
               candidateTitle: candidate.title,
               candidateDescription: candidate.description,
               targetProblem: candidate.targetProblem,
               attackAngle: angle,
               judgeProfile: angle === "judge" ? combinedJudgeProfile : undefined,
               hackathonConstraints: constraints,
-              round: round + 1,
+              round: angleIdx + 1,
             }),
-          `${candidate.title} | ${angle}`,
+            `${candidate.title} | ${angle}`,
+          );
+
+          evaluated.killRounds.push({
+            round: angleIdx + 1,
+            attackAngle: angle,
+            attack: killResult.attack,
+            survived: killResult.survived,
+            reason: killResult.reason,
+          });
+
+          if (!killResult.survived) {
+            stillAlive = false;
+            evaluated.eliminationReason = `Round ${round} ${angle}: ${killResult.reason}`;
+          }
+        }
+
+        if (stillAlive) {
+          evaluated.survived = true;
+          const lastKill = evaluated.killRounds[evaluated.killRounds.length - 1];
+          evaluated.survivalReason = lastKill?.reason ?? "Survived all kill rounds";
+          const judgeKill = evaluated.killRounds.find(r => r.attackAngle === "judge");
+          if (judgeKill) {
+            evaluated.judgeAlignmentScore = judgeKill.survived ? "HIGH" : "LOW";
+            evaluated.judgeAlignmentReason = judgeKill.reason;
+          }
+          allSurvivors.push(evaluated);
+        }
+
+        roundCandidates.push(evaluated);
+        allEvaluatedCandidates.push(evaluated);
+
+        // Persist to DB
+        await prisma.solutionCandidate.create({
+          data: {
+            agentRunId,
+            title: evaluated.title,
+            description: evaluated.description,
+            targetProblem: evaluated.targetProblem,
+            evidenceSources: evaluated.evidenceSources,
+            killRounds: evaluated.killRounds as unknown as import("@prisma/client").Prisma.JsonArray,
+            survived: evaluated.survived,
+            survivalReason: evaluated.survivalReason ?? null,
+            eliminationReason: evaluated.eliminationReason ?? null,
+            judgeAlignmentScore: evaluated.judgeAlignmentScore ?? null,
+            judgeAlignmentReason: evaluated.judgeAlignmentReason ?? null,
+          },
+        });
+      }
+
+      await updateAgentRun(agentRunId, {
+        candidatesEvaluated: allEvaluatedCandidates.length,
+        candidatesSurvived: allSurvivors.length,
+      });
+
+      // If survivors found, we're done with the loop
+      if (allSurvivors.length > 0) break;
+
+      // All killed this round — diagnose and prepare next round
+      if (round < MAX_ROUNDS) {
+        const killedThisRound = roundCandidates.filter(c => !c.survived);
+        lastDiagnosis = await step(
+          "CRITICIZE",
+          `Round ${round} diagnosis: why all candidates failed, what to try next`,
+          () => ai.diagnoseFailures({
+            killedCandidates: killedThisRound.map(c => ({
+              title: c.title,
+              eliminationReason: c.eliminationReason ?? "Unknown",
+            })),
+            targetCommunity: community,
+            painMap,
+          }),
+          `${killedThisRound.length} killed this round`,
         );
 
-        candidate.killRounds.push({
-          round: round + 1,
-          attackAngle: angle,
-          attack: killResult.attack,
-          survived: killResult.survived,
-          reason: killResult.reason,
+        // Add the diagnosis angle as an observation so it's visible in the case timeline
+        await createObservation({
+          painCaseId: context.painCaseId,
+          content: `Round ${round} failure diagnosis: ${lastDiagnosis.commonFailurePattern}. Falsified assumption: ${lastDiagnosis.falsifiedAssumption}. New angle for round ${round + 1}: ${lastDiagnosis.newAngle}`,
+          context: `Auto-generated by PainLab agent — investigation round ${round} diagnosis`,
         });
-
-        if (!killResult.survived) {
-          stillAlive = false;
-          candidate.survived = false;
-          candidate.eliminationReason = `Round ${round + 1} (${angle}): ${killResult.reason}`;
-        }
       }
-
-      if (stillAlive) {
-        candidate.survived = true;
-        candidatesSurvived++;
-        const lastRound = candidate.killRounds[candidate.killRounds.length - 1];
-        candidate.survivalReason = lastRound?.reason ?? "Survived all kill rounds";
-
-        // Judge alignment from the last judge round if available
-        const judgeRound = candidate.killRounds.find((r) => r.attackAngle === "judge");
-        if (judgeRound) {
-          candidate.judgeAlignmentScore = judgeRound.survived ? "HIGH" : "LOW";
-          candidate.judgeAlignmentReason = judgeRound.reason;
-        }
-      }
-
-      // Persist candidate to DB
-      await prisma.solutionCandidate.create({
-        data: {
-          agentRunId,
-          title: candidate.title,
-          description: candidate.description,
-          targetProblem: candidate.targetProblem,
-          evidenceSources: candidate.evidenceSources,
-          killRounds: candidate.killRounds as unknown as import("@prisma/client").Prisma.JsonArray,
-          survived: candidate.survived,
-          survivalReason: candidate.survivalReason ?? null,
-          eliminationReason: candidate.eliminationReason ?? null,
-          judgeAlignmentScore: candidate.judgeAlignmentScore ?? null,
-          judgeAlignmentReason: candidate.judgeAlignmentReason ?? null,
-        },
-      });
-
-      // Update run counts
-      await updateAgentRun(agentRunId, {
-        candidatesEvaluated,
-        candidatesSurvived,
-      });
     }
 
-    if (await checkStop()) return await abort(agentRunId, "Stopped by user after kill cycle");
+    if (await checkStop()) return await abort(agentRunId, "Stopped by user after kill loop");
 
-    // ── Phase 6: Conclude ────────────────────────────────────────────────────
+    // ── Phase 6: Conclude ──────────────────────────────────────────────────────
+    await conclude(agentRunId, context.painCaseId, allSurvivors, ai, context, null);
 
-    const survivors = savedCandidates.filter((c) => c.survived);
-    await conclude(agentRunId, context.painCaseId, survivors, ai, null);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error("[hackathonAgent] fatal error:", msg);
@@ -434,24 +510,24 @@ async function conclude(
   painCaseId: string,
   survivors: EvaluatedCandidate[],
   ai: AiProvider,
+  context: HackathonContext,
   forcedSummary: string | null,
 ) {
   if (survivors.length === 0) {
-    // Honest KILLED_ALL outcome
+    // Count how many total rounds and candidates were tried
+    const totalCandidates = await prisma.solutionCandidate.count({ where: { agentRunId } });
+    const totalRounds = await prisma.agentRun.findUnique({ where: { id: agentRunId }, select: { investigationRound: true } });
+
     await updateAgentRun(agentRunId, {
       status: "KILLED_ALL",
       completedAt: new Date(),
-      summary:
-        forcedSummary ??
-        "No candidate survived the kill cycle. Review the agent steps to see what was tried and why each candidate was eliminated. The evidence collected is still available in your Pain Case.",
+      summary: forcedSummary ?? `No candidate survived after ${totalRounds?.investigationRound ?? 1} investigation round(s) and ${totalCandidates} candidates evaluated. The evidence trail and failure diagnoses are in the timeline — use them to refine your target community or try a different angle.`,
     });
 
-    // Still save a learning so the investigation isn't empty
     await createLearning({
       painCaseId,
-      statement:
-        "The agent evaluated all candidates and none survived the kill cycle. This means the evidence collected did not yet support a solution that is real, buildable, and judge-aligned.",
-      basis: "Agent kill cycle — all candidates eliminated",
+      statement: `The agent ran ${totalRounds?.investigationRound ?? 1} round(s) and evaluated ${totalCandidates} candidates. None survived. The failure diagnoses recorded in the timeline reveal what assumptions kept failing — these are the most useful output from this run.`,
+      basis: "Agent kill cycle — all rounds exhausted",
       confidence: "HIGH",
     });
     return;
@@ -461,37 +537,32 @@ async function conclude(
   let findings;
   try {
     findings = await ai.extractStructuredFindings({
-      survivors: survivors.map((s) => ({
+      survivors: survivors.map(s => ({
         title: s.title,
         description: s.description,
         targetProblem: s.targetProblem,
         survivalReason: s.survivalReason ?? "",
         evidenceSources: s.evidenceSources,
       })),
-      targetCommunity: "", // will be filled from context if needed
-      hackathonName: "",
+      targetCommunity: context.targetCommunity,
+      hackathonName: context.hackathonName,
     });
   } catch {
     findings = null;
   }
 
-  // Save AI-generated hypotheses (labeled createdBy=AI)
+  // Save AI-generated hypotheses
   if (findings?.hypotheses?.length) {
     for (const h of findings.hypotheses) {
       try {
         await prisma.hypothesis.create({
-          data: {
-            painCaseId,
-            statement: h.statement,
-            rationale: h.rationale,
-            createdBy: "AI",
-          },
+          data: { painCaseId, statement: h.statement, rationale: h.rationale, createdBy: "AI" },
         });
       } catch { /* non-fatal */ }
     }
   }
 
-  // Save AI-generated learnings (labeled createdBy=AI)
+  // Save AI-generated learnings
   if (findings?.learnings?.length) {
     for (const l of findings.learnings) {
       try {
@@ -508,23 +579,25 @@ async function conclude(
     }
   }
 
-  // Always save a plain-language learning about what survived
+  // Always add a plain-language survivor summary
   await createLearning({
     painCaseId,
-    statement: `${survivors.length} candidate(s) survived the kill cycle: ${survivors.map((s) => `"${s.title}"`).join(", ")}. These passed user-need, technical feasibility, and judge-alignment checks.`,
+    statement: `${survivors.length} candidate(s) survived: ${survivors.map(s => `"${s.title}"`).join(", ")}. Each passed user-need, technical feasibility, and judge-alignment checks.`,
     basis: "Agent kill cycle results",
     confidence: "MEDIUM",
   });
 
   const topSurvivor = survivors[0];
+  const totalCandidates = await prisma.solutionCandidate.count({ where: { agentRunId } });
+
   await updateAgentRun(agentRunId, {
     status: "COMPLETED",
     completedAt: new Date(),
-    summary: `${survivors.length} of ${survivors.length + (await prisma.solutionCandidate.count({ where: { agentRunId, survived: false } }))} candidates survived. Top: "${topSurvivor?.title}" — ${topSurvivor?.survivalReason ?? ""}`,
+    summary: `${survivors.length} of ${totalCandidates} candidates survived. Top: "${topSurvivor?.title}" — ${topSurvivor?.survivalReason ?? ""}`,
   });
 }
 
-// ── Abort helper ──────────────────────────────────────────────────────────────
+// ── Abort helper ───────────────────────────────────────────────────────────────
 
 async function abort(agentRunId: string, reason: string) {
   await updateAgentRun(agentRunId, {

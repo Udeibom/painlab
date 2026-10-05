@@ -21,6 +21,8 @@ export async function updateAgentRun(
     candidatesEvaluated: number;
     candidatesSurvived: number;
     summary: string;
+    painMap: import("@prisma/client").Prisma.NullableJsonNullValueInput | import("@prisma/client").Prisma.InputJsonValue;
+    investigationRound: number;
   }>,
 ) {
   return prisma.agentRun.update({ where: { id }, data });

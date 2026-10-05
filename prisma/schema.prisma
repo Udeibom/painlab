@@ -228,6 +228,8 @@ model AgentRun {
   candidatesEvaluated Int            @default(0)
   candidatesSurvived  Int            @default(0)
   summary            String?
+  painMap            Json?           // structured pain map built before generation
+  investigationRound Int             @default(1) // which iteration we're on (max 3)
 
   steps      AgentStep[]
   candidates SolutionCandidate[]
