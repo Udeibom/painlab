@@ -81,7 +81,7 @@ export class GroqAiProvider implements AiProvider {
         return JSON.parse(cleaned) as T;
       } catch {
         if (attempt === 1) {
-          throw new Error(`Groq returned invalid JSON after 2 attempts. Raw: ${raw.slice(0, 300)}`);
+        throw new Error(`Groq returned invalid JSON after 2 attempts. Raw: ${raw.slice(0, 500)}`);
         }
       }
     }
@@ -92,25 +92,37 @@ export class GroqAiProvider implements AiProvider {
   // Produces search queries from a hackathon brief. Fast model, small output.
 
   async structurePainCase(input: StructurePainCaseInput): Promise<StructuredPainCaseOutput> {
+    const isBroadTarget = !input.targetCommunity ||
+      input.targetCommunity.split(" ").length <= 2 ||
+      ["people", "users", "nigeria", "africa", "everyone"].some(w =>
+        input.targetCommunity?.toLowerCase().trim() === w
+      );
+
+    const communityInstruction = isBroadTarget
+      ? `The target is broadly described as "${input.targetCommunity ?? "not specified"}". Generate search queries that will help DISCOVER a specific underserved group with a real pain that aligns with this hackathon. Look for: specific demographic + specific recurring problem + specific context where money/payments is relevant.`
+      : `Target community: ${input.targetCommunity}. Generate search queries that surface real, specific unmet needs of this community.`;
+
     const prompt = `
-Given this hackathon brief and target community, produce:
-1. A short Pain Case title (max 10 words)
-2. A one-paragraph description of what we're investigating
-3. 3-5 tags
-4. 4-6 specific search queries that will surface real unmet needs of this community online
+Given this hackathon brief, produce a title, description, tags, and search queries.
 
 Hackathon brief: ${input.hackathonBrief ?? input.freeformDescription}
-Target community: ${input.targetCommunity ?? "general"}
+${communityInstruction}
 
-Return JSON matching exactly:
+Search query rules:
+- At least 2 queries should target specific pain/frustration/complaint (not just "needs of X")
+- At least 1 query should look for workarounds people currently use
+- At least 1 query should look for failed solutions and why they failed
+- Queries should be specific enough to return real stories, not just generic articles
+
+Return JSON:
 {
-  "title": "string",
-  "description": "string",
+  "title": "string (max 10 words)",
+  "description": "string (one paragraph)",
   "tags": ["string"],
-  "searchQueries": ["string", "string", "string", "string"]
+  "searchQueries": ["string", "string", "string", "string", "string", "string"]
 }`.trim();
 
-    return this.callJson<StructuredPainCaseOutput>(FAST_MODEL, prompt, 500);
+    return this.callJson<StructuredPainCaseOutput>(FAST_MODEL, prompt, 800);
   }
 
   // ── generateCandidates ─────────────────────────────────────────────────────
@@ -159,32 +171,34 @@ Return JSON:
 
   async killRound(input: KillRoundInput): Promise<KillRoundResult> {
     const angleInstructions: Record<string, string> = {
-      user: "Attack from the perspective of the target user. Is this problem real and specific enough? Would someone actually use this? Is the pain acute or just mild inconvenience?",
-      technical: "Attack from a technical perspective. Can one developer realistically build this in a hackathon (48-72 hours)? Is the scope too large? Are there hidden dependencies or infrastructure requirements that make it unfeasible?",
-      judge: `Attack from the perspective of the judges. Based on what you know about these judges: ${input.judgeProfile ?? "unknown"} — would they find this compelling? Does it align with what they publicly care about?`,
+      user: "Attack from the perspective of the target user. Ask: Is the pain acute enough that someone would change their behavior for this? Does the solution address the specific workaround failure, or does it just add another layer on top of the existing problem? Be specific — generic criticisms like 'not specific enough' don't count. Name the exact flaw.",
+      technical: "Attack from a technical perspective. Can one developer realistically build a working demo of this in 48-72 hours? Is the core functionality achievable without external dependencies that would take days to integrate? Be specific about which part is infeasible and why. IMPORTANT: Do NOT claim that a specific API capability is unavailable unless you are certain. When in doubt about API capabilities, assume the platform's developer API likely exposes the needed data and focus your criticism on implementation complexity instead.",
+      judge: `Attack from the perspective of the judges. Based on these judge profiles: ${input.judgeProfile ?? "unknown judges"} — would they find this compelling, original, and credible? Does it make a specific case for a real problem? Be specific about what would concern these particular judges.`,
     };
 
     const prompt = `
-You are running a kill-cycle round on a hackathon solution candidate. Be rigorous and honest. Your job is to find fatal flaws, not to encourage.
+You are running a kill-cycle evaluation on a hackathon solution candidate.
 
 Candidate: "${input.candidateTitle}"
 Description: ${input.candidateDescription}
 Problem it claims to solve: ${input.targetProblem}
 Hackathon constraints: ${input.hackathonConstraints}
-Attack angle (Round ${input.round}): ${input.attackAngle}
+Evaluation angle: ${input.attackAngle}
 
-Instructions: ${angleInstructions[input.attackAngle]}
+${angleInstructions[input.attackAngle]}
 
-Verdict rules:
-- survived=false if there is a FATAL flaw (the problem isn't real, it can't be built, judges won't care)
-- survived=true ONLY if this candidate genuinely holds up against this specific attack
+IMPORTANT verdict rules:
+- survived=false ONLY if there is a SPECIFIC, CONCRETE fatal flaw you can name precisely
+- survived=true if the candidate holds up reasonably well against this angle — it doesn't need to be perfect
+- "The problem isn't specific enough" is NOT a valid kill reason unless you explain exactly what specificity is missing and why it matters
+- A candidate that addresses a real, verifiable problem with a buildable solution should survive
 
 Return JSON:
 {
   "attackAngle": "${input.attackAngle}",
-  "attack": "string (2-3 sentences: the specific criticism)",
+  "attack": "string (2-3 sentences: the specific, named criticism)",
   "survived": boolean,
-  "reason": "string (1-2 sentences: why it survived or why it was killed)"
+  "reason": "string (1-2 sentences: the precise reason it survived or the precise fatal flaw)"
 }`.trim();
 
     return this.callJson<KillRoundResult>(SMART_MODEL, prompt, 500);
@@ -271,34 +285,39 @@ Your only job is to extract and structure the real pains, workarounds, and gaps 
 Target community: ${input.targetCommunity}
 Constraints: ${input.hackathonConstraints}
 
-Evidence excerpts (real sources):
+Evidence excerpts (real sources — some are full page content):
 ${excerptList}
 
-For each distinct pain you can identify from the evidence, fill in ALL fields.
-The "currentWorkaround" field is the most important — what do people actually do today to cope?
-The "whyWorkaroundFails" field is where the real opportunity lives.
+IMPORTANT: Extract specific, granular pains. Look for:
+- Quotes or specific complaints from real people
+- Specific workarounds people have invented (these reveal the real need)
+- Specific failures of existing solutions (not just "they don't work")
+- Recurring patterns across multiple sources
+
+The "currentWorkaround" field is the most important — what do people actually do today?
+The "whyWorkaroundFails" field reveals the true gap.
 
 Return JSON:
 {
   "pains": [
     {
-      "whoExactly": "specific sub-group (age, location, daily situation — not just the community name)",
-      "whatHappens": "the concrete painful event or situation",
+      "whoExactly": "specific sub-group (age, occupation, location, daily situation — quote evidence if possible)",
+      "whatHappens": "the concrete painful event or situation — be specific, cite the evidence",
       "frequency": "daily / weekly / situational / seasonal",
-      "currentWorkaround": "what they actually do right now to deal with this",
-      "whyWorkaroundFails": "the specific way the workaround is inadequate",
+      "currentWorkaround": "what they actually do right now — look for informal systems, manual processes, peer networks",
+      "whyWorkaroundFails": "the specific way the workaround is inadequate — time, cost, trust, reliability, access",
       "whoAlreadyTried": "organizations, apps, or programs that already tried to solve this",
-      "whyTheyFellShort": "specific reason existing solutions failed or don't reach this group",
-      "whatRemainsUnsolved": "the gap that persists after all existing solutions",
-      "hardestConstraint": "the structural fact that makes this problem genuinely hard"
+      "whyTheyFellShort": "specific reason existing solutions failed — too expensive, wrong channel, wrong language, trust issues",
+      "whatRemainsUnsolved": "the exact gap that persists",
+      "hardestConstraint": "the structural fact that makes this genuinely hard — infrastructure, trust, regulation, literacy"
     }
   ],
-  "dominantPattern": "1-2 sentences: what does ALL this evidence actually show about this community?",
-  "mostPromisingAngle": "which specific pain entry looks most tractable for a hackathon solution and why"
+  "dominantPattern": "1-2 sentences: what does ALL this evidence actually show?",
+  "mostPromisingAngle": "which pain entry has the most tractable gap, and why a payment/AI solution could close it"
 }
 
-Identify 2-3 distinct pain entries. Only include pains grounded in the evidence — do not invent.
-Keep each field to 1-2 sentences maximum — be concise and specific.`.trim();
+Identify 2-3 distinct pain entries. Only extract what is grounded in the evidence.
+Keep each field concise — 1-2 sentences maximum.`.trim();
 
     const result = await this.callJson<PainMap>(SMART_MODEL, prompt, 2400);
     // Ensure pains is always an array
@@ -400,9 +419,11 @@ Most promising angle identified: ${input.painMap.mostPromisingAngle}
 Rules for this round:
 - Each candidate MUST trace to a specific Pain entry (cite Pain 0, Pain 1, etc.)
 - Each candidate MUST explain how it addresses the specific workaround failure, not just the general problem
-- Do NOT repeat approaches that were killed in previous rounds
+- Do NOT repeat approaches that were killed in previous rounds — find a genuinely different angle
+- If previous rounds failed on regulatory/API constraints, try a different aspect of the problem entirely
 - Focus especially on the new angle above
 - Solutions must be buildable by one developer in a hackathon
+- Prefer solutions that USE the platform's existing capabilities rather than trying to work around its limitations
 
 Generate exactly ${input.maxCandidates > 3 ? 3 : input.maxCandidates} candidates.
 

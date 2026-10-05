@@ -43,6 +43,7 @@ export class TavilyResearchProvider implements ResearchProvider {
 
   // ── readPage ─────────────────────────────────────────────────────────────
   // Uses Jina Reader — free, no key, converts any URL to clean text.
+  // Returns up to 4000 chars of clean page text.
 
   async readPage(url: string): Promise<string> {
     try {
@@ -55,11 +56,29 @@ export class TavilyResearchProvider implements ResearchProvider {
       clearTimeout(timer);
       if (!resp.ok) return "";
       const text = await resp.text();
-      // Truncate to 3000 chars — enough context, avoids huge token bills
-      return text.slice(0, 3000);
+      // 4000 chars: more content, still token-efficient
+      return text.slice(0, 4000);
     } catch {
       return "";
     }
+  }
+
+  // ── readTopResults ────────────────────────────────────────────────────────
+  // For each search result, read the full page and return enriched evidence.
+  // This is what makes the research deep instead of headline-level.
+
+  async readTopResults(results: FoundEvidence[], maxToRead = 3): Promise<FoundEvidence[]> {
+    const enriched: FoundEvidence[] = [];
+    for (const result of results.slice(0, maxToRead)) {
+      const fullText = await this.readPage(result.url);
+      enriched.push({
+        ...result,
+        snippet: fullText.length > result.snippet.length ? fullText : result.snippet,
+      });
+      await sleep(300); // small delay between page reads
+    }
+    // Return enriched + remaining un-enriched
+    return [...enriched, ...results.slice(maxToRead)];
   }
 
   // ── searchReddit ─────────────────────────────────────────────────────────

@@ -28,6 +28,7 @@ export interface SourceSummary {
 export interface ResearchProvider {
   findEvidence(input: FindEvidenceInput): Promise<FoundEvidence[]>;
   readPage(url: string): Promise<string>;
+  readTopResults(results: FoundEvidence[], maxToRead?: number): Promise<FoundEvidence[]>;
   searchReddit(query: string, subreddits?: string[]): Promise<FoundEvidence[]>;
   summarizeSources(input: SummarizeSourcesInput): Promise<SourceSummary>;
 }
