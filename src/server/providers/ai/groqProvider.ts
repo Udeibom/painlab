@@ -222,15 +222,15 @@ DECISION RULES:
 - "There's competition" is NEVER a fatal flaw
 - "It could be better" is NEVER a fatal flaw
 
-Return JSON:
+Return JSON — keep all string fields under 80 words each:
 {
   "attackAngle": "${input.attackAngle}",
-  "attack": "2-3 sentences: the specific named criticism",
+  "attack": "1-2 sentences max: the specific criticism",
   "survived": boolean,
-  "reason": "if survived=false: the single concrete fatal blocker with evidence citation if user angle. If survived=true: why it passes."
+  "reason": "1 sentence max: the fatal blocker OR why it passes"
 }`.trim();
 
-    return this.callJson<KillRoundResult>(SMART_MODEL, prompt, 500);
+    return this.callJson<KillRoundResult>(SMART_MODEL, prompt, 700);
   }
 
   // ── synthesizeJudgeProfile ─────────────────────────────────────────────────
