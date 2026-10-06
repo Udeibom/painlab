@@ -3,6 +3,8 @@ import type {
   AiProvider, StructurePainCaseInput, StructuredPainCaseOutput,
   GenerateCandidatesInput, GeneratedCandidate, GenerateFromPainMapInput,
   BuildPainMapInput, PainMap, DiagnoseFailuresInput, FailureDiagnosis,
+  DetectAnomaliesInput, AnomalyDetectionOutput,
+  CheckNoveltyInput, NoveltyCheckResult,
   KillRoundInput, KillRoundResult, JudgeProfileInput, JudgeProfileOutput,
   ExtractFindingsInput, StructuredFindings, SummarizeEvidenceInput, EvidenceSummary,
 } from "./types";
@@ -15,8 +17,15 @@ export class NullAiProvider implements AiProvider {
   async generateFromPainMap(_: GenerateFromPainMapInput): Promise<GeneratedCandidate[]> { return []; }
   async buildPainMap(_: BuildPainMapInput): Promise<PainMap> {
     return { pains: [], dominantPattern: "", mostPromisingAngle: "" };
-  }  async diagnoseFailures(_: DiagnoseFailuresInput): Promise<FailureDiagnosis> {
+  }
+  async diagnoseFailures(_: DiagnoseFailuresInput): Promise<FailureDiagnosis> {
     return { commonFailurePattern: "", falsifiedAssumption: "", newResearchQuestions: [], newSearchQueries: [], newAngle: "" };
+  }
+  async detectAnomalies(_: DetectAnomaliesInput): Promise<AnomalyDetectionOutput> {
+    return { anomalies: [], summary: "" };
+  }
+  async checkNovelty(_: CheckNoveltyInput): Promise<NoveltyCheckResult> {
+    return { existingSolutionsFound: [], isNovel: true, differentiator: "", noveltyRisk: "LOW" };
   }
   async killRound(_: KillRoundInput): Promise<KillRoundResult> {
     return { attackAngle: "user", attack: "", survived: false, reason: "Null provider" };

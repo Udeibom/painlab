@@ -234,6 +234,7 @@ model AgentRun {
 
   steps      AgentStep[]
   candidates SolutionCandidate[]
+  anomalies  AnomalySignal[]
 
   @@map("agent_runs")
 }
@@ -271,6 +272,19 @@ model SolutionCandidate {
   createdAt            DateTime @default(now())
 
   @@map("solution_candidates")
+}
+
+model AnomalySignal {
+  id          String   @id @default(cuid())
+  agentRunId  String
+  agentRun    AgentRun @relation(fields: [agentRunId], references: [id], onDelete: Cascade)
+  observation String   // what was found: "guests repeatedly bring their own extension cords"
+  sourceUrl   String?  // where it was found
+  why         String?  // initial hypothesis about why
+  investigate Boolean  @default(true) // should this be followed up?
+  createdAt   DateTime @default(now())
+
+  @@map("anomaly_signals")
 }
 
 // --- Evidence (schema only in v1, now with agent writing to it) ---

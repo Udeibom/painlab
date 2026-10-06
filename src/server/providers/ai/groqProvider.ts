@@ -7,6 +7,8 @@ import type {
   GenerateFromPainMapInput,
   BuildPainMapInput, PainMap,
   DiagnoseFailuresInput, FailureDiagnosis,
+  DetectAnomaliesInput, AnomalyDetectionOutput,
+  CheckNoveltyInput, NoveltyCheckResult,
   KillRoundInput, KillRoundResult,
   JudgeProfileInput, JudgeProfileOutput,
   ExtractFindingsInput, StructuredFindings,
@@ -99,30 +101,37 @@ export class GroqAiProvider implements AiProvider {
       );
 
     const communityInstruction = isBroadTarget
-      ? `The target is broadly described as "${input.targetCommunity ?? "not specified"}". Generate search queries that will help DISCOVER a specific underserved group with a real pain that aligns with this hackathon. Look for: specific demographic + specific recurring problem + specific context where money/payments is relevant.`
-      : `Target community: ${input.targetCommunity}. Generate search queries that surface real, specific unmet needs of this community.`;
+      ? `The target is broadly described as "${input.targetCommunity ?? "not specified"}". Generate search queries that will DISCOVER a specific underserved group with a real pain. Look for: specific demographic + specific recurring problem + specific context.`
+      : `Target community: ${input.targetCommunity}. Generate queries that surface real, specific unmet needs.`;
 
     const prompt = `
-Given this hackathon brief, produce a title, description, tags, and search queries.
+Given this hackathon brief, produce search queries using COMPETING EXPLORER STRATEGIES.
+Different explorers find different things. Don't let one strategy dominate.
 
 Hackathon brief: ${input.hackathonBrief ?? input.freeformDescription}
 ${communityInstruction}
 
-Search query rules:
-- At least 2 queries should target specific pain/frustration/complaint (not just "needs of X")
-- At least 1 query should look for workarounds people currently use
-- At least 1 query should look for failed solutions and why they failed
-- Queries should be specific enough to return real stories, not just generic articles
+Generate exactly 8 search queries, one from each explorer type:
+1. COMPLAINT HUNTER: what do [community] complain about repeatedly?
+2. WORKAROUND HUNTER: what workarounds or hacks do [community] use?
+3. BEHAVIORAL HUNTER: what do [community] DO (not say) that reveals friction?
+4. FAILURE HUNTER: what solutions for [community] failed and why?
+5. EXISTING SOLUTION HUNTER: what apps/services for [community] exist and what do users say is still missing?
+6. MONEY TRAIL: what do [community] pay money for to solve problems themselves?
+7. STAFF/ADJACENT PERSPECTIVE: what do people who serve [community] observe about their pain?
+8. NEGATIVE REVIEW HUNTER: what makes [community] leave 1-star reviews or abandon products?
+
+Each query must be specific enough to return real stories, not generic articles.
 
 Return JSON:
 {
   "title": "string (max 10 words)",
   "description": "string (one paragraph)",
   "tags": ["string"],
-  "searchQueries": ["string", "string", "string", "string", "string", "string"]
+  "searchQueries": ["q1", "q2", "q3", "q4", "q5", "q6", "q7", "q8"]
 }`.trim();
 
-    return this.callJson<StructuredPainCaseOutput>(FAST_MODEL, prompt, 800);
+    return this.callJson<StructuredPainCaseOutput>(FAST_MODEL, prompt, 1100);
   }
 
   // ── generateCandidates ─────────────────────────────────────────────────────
@@ -170,53 +179,55 @@ Return JSON:
   // One round of structured criticism. Smart model. Returns survive/kill verdict.
 
   async killRound(input: KillRoundInput): Promise<KillRoundResult> {
+    const evidenceSection = input.evidenceExcerpts && input.evidenceExcerpts.length > 0
+      ? `\nACTUAL EVIDENCE COLLECTED (cite this when making claims about user behavior):\n${input.evidenceExcerpts.slice(0, 5).map((e, i) => `[${i}] ${e.slice(0, 250)}`).join("\n")}`
+      : "";
+
     const angleInstructions: Record<string, string> = {
-      user: `USER ANGLE: Does this solve a real, acute pain for the specific target user?
-The question is: would the people described actually use this, given how they behave today?
-Look at the "current workaround" — does this solution make that workaround better, or does it ask users to change their entire behavior?
-A solution that improves existing behavior is easier to adopt than one that requires entirely new habits.
-VALID kill: the workaround this is based on doesn't actually exist, OR the improvement is so marginal users wouldn't bother switching.
-INVALID kill: "the problem isn't specific enough", "there's competition", "users might not trust it". These are not fatal flaws.`,
+      user: `USER ANGLE: Would the specific people described actually use this, given how they behave today?
+The question is whether the solution improves their existing workaround or asks them to change completely.
+EVIDENCE REQUIREMENT: If you claim users won't adopt this, you MUST cite specific evidence from the evidence list above.
+An adoption concern with no evidence citation is NOT a valid kill reason — it becomes survived=true.
+VALID kill: evidence directly shows users rejected this type of approach before, OR the workaround this improves doesn't actually exist in the evidence.
+INVALID kill: general opinion that users might not trust it, might prefer something else, or might not care.`,
 
       technical: `TECHNICAL ANGLE: Can one developer build a working demo of this in 48-72 hours?
-Focus on what's actually in scope for a hackathon demo — it doesn't need to be production-ready, it needs to DEMONSTRATE the core mechanic.
-IMPORTANT: Do NOT claim an API capability is unavailable unless you are certain. Payment platforms (PayPal, Stripe, etc.) expose extensive APIs. When uncertain, assume the data is available.
-VALID kill: the core mechanic requires a third-party integration that takes weeks to approve (e.g., bank partnerships), OR the fundamental compute requirement is impossible on free tiers.
-INVALID kill: "it would be complex to build", "it would need a lot of work", "it might not scale". These are engineering challenges, not fatal flaws for a hackathon demo.`,
+Focus on the hackathon demo scope — it needs to demonstrate the core mechanic, not be production-ready.
+IMPORTANT: Do NOT claim an API capability is unavailable unless you are certain. When uncertain, assume the data is available.
+VALID kill: the core mechanic requires an integration that takes weeks to approve (e.g., bank partnerships), OR requires compute impossible on free tiers.
+INVALID kill: "it would be complex", "it would need a lot of work", "it might not scale".`,
 
       judge: `JUDGE ANGLE: Based on these specific judges: ${input.judgeProfile ?? "unknown judges"}
-Would this project score well on: (1) technological implementation quality, (2) coherent product experience, (3) credible real-world impact, (4) novelty?
-The key question is: does it demonstrate something working end-to-end that a judge can actually interact with?
-VALID kill: the judges explicitly stated they don't want this type of project, OR the demo cannot show anything working in under 3 minutes.
-INVALID kill: "judges might prefer something else", "it's not the most innovative thing possible". These are subjective opinions, not fatal flaws.`,
+Would this project score well on: technological implementation, coherent product experience, credible real-world impact, novelty?
+VALID kill: judges explicitly stated they don't want this type of project, OR the demo cannot show anything working in 3 minutes.
+INVALID kill: "judges might prefer something else", "it's not the most innovative possible thing".`,
     };
 
     const prompt = `
-Kill cycle evaluation — be a fair but demanding critic.
+Kill cycle evaluation.
 
 Candidate: "${input.candidateTitle}"
 Description: ${input.candidateDescription}
-Specific problem it addresses: ${input.targetProblem}
-Hackathon constraints: ${input.hackathonConstraints}
+Problem addressed: ${input.targetProblem}
+Constraints: ${input.hackathonConstraints}
+${evidenceSection}
 
 EVALUATION ANGLE: ${input.attackAngle}
 ${angleInstructions[input.attackAngle]}
 
 DECISION RULES:
-- survived=true if the candidate has no FATAL flaw from this specific angle
+- survived=true if the candidate has no FATAL flaw from this angle
 - survived=false ONLY when you can name one CONCRETE, SPECIFIC fatal blocker
-- A fatal blocker is something that makes the product literally impossible to build or use — not something that makes it harder or less ideal
-- "The problem isn't acute enough" is NOT a fatal flaw unless you explain exactly why the user would never change their current behavior
+- For user angle: unsupported opinion about adoption = survived=true. Must cite evidence.
 - "There's competition" is NEVER a fatal flaw
 - "It could be better" is NEVER a fatal flaw
-- Preference for a different approach is NEVER a fatal flaw
 
 Return JSON:
 {
   "attackAngle": "${input.attackAngle}",
-  "attack": "2-3 sentences: the specific named criticism from this angle",
+  "attack": "2-3 sentences: the specific named criticism",
   "survived": boolean,
-  "reason": "if survived=false: name the single concrete fatal blocker precisely. If survived=true: state why it passes this angle."
+  "reason": "if survived=false: the single concrete fatal blocker with evidence citation if user angle. If survived=true: why it passes."
 }`.trim();
 
     return this.callJson<KillRoundResult>(SMART_MODEL, prompt, 500);
@@ -470,6 +481,86 @@ Return JSON:
 
     const result = await this.callJson<{ candidates: GeneratedCandidate[] }>(SMART_MODEL, prompt, 1400);
     return result.candidates ?? [];
+  }
+
+  // ── detectAnomalies ───────────────────────────────────────────────────────
+  // Scans evidence for unexpected behavioral signals — things people do that
+  // weren't explicitly searched for. These are the "unknown unknowns."
+
+  async detectAnomalies(input: DetectAnomaliesInput): Promise<AnomalyDetectionOutput> {
+    const excerptList = input.evidenceExcerpts
+      .slice(0, 8)
+      .map((e, i) => `[${i}] ${e.slice(0, 250)}`)
+      .join("\n");
+
+    const prompt = `
+Scan these evidence excerpts for unexpected behavioral signals from: ${input.targetCommunity}
+
+Evidence:
+${excerptList}
+
+Look for: workarounds people invented, things people bought to fix a gap, abandoned solutions, contradictions between product promises and user experience, repeated informal systems.
+
+Return JSON. If nothing unusual found, return empty array:
+{
+  "anomalies": [],
+  "summary": "No significant anomalies detected"
+}
+
+If anomalies found:
+{
+  "anomalies": [
+    { "observation": "1 sentence", "sourceIndex": 0, "why": "1 sentence", "investigate": true }
+  ],
+  "summary": "1 sentence"
+}`.trim();
+
+    try {
+      const result = await this.callJson<AnomalyDetectionOutput>(FAST_MODEL, prompt, 500);
+      return { anomalies: result.anomalies ?? [], summary: result.summary ?? "No anomalies detected" };
+    } catch {
+      // Non-fatal — anomaly detection is an enhancement, not a blocker
+      return { anomalies: [], summary: "Anomaly scan skipped" };
+    }
+  }
+
+  // ── checkNovelty ──────────────────────────────────────────────────────────
+  // Actively searches for existing solutions before accepting a candidate.
+  // A candidate that's already well-served by the market should be killed
+  // on novelty grounds before the full kill cycle runs.
+
+  async checkNovelty(input: CheckNoveltyInput): Promise<NoveltyCheckResult> {
+    const existingList = input.existingSolutionsFound.length > 0
+      ? `Existing solutions found:\n${input.existingSolutionsFound.join("\n")}`
+      : "No existing solutions were found in search.";
+
+    const prompt = `
+Evaluate whether this hackathon candidate is genuinely novel given what already exists.
+
+Candidate: "${input.candidateTitle}"
+Description: ${input.candidateDescription}
+
+${existingList}
+
+Questions to answer:
+1. Does something very similar already exist as a mature product?
+2. If similar things exist, what specifically would make this different?
+3. What is the novelty risk?
+
+Novelty risk levels:
+- LOW: nothing closely similar exists, or this has a clear differentiator
+- MEDIUM: similar things exist but there's a meaningful gap this fills
+- HIGH: this is essentially the same as an existing mature product
+
+Return JSON:
+{
+  "existingSolutionsFound": ["product name only, max 5 words"],
+  "isNovel": boolean,
+  "differentiator": "string: what makes this different, or 'None identified'",
+  "noveltyRisk": "LOW" | "MEDIUM" | "HIGH"
+}`.trim();
+
+    return this.callJson<NoveltyCheckResult>(SMART_MODEL, prompt, 600);
   }
 
   // ── summarizeEvidence (legacy) ─────────────────────────────────────────────

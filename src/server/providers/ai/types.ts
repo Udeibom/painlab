@@ -46,9 +46,10 @@ export interface KillRoundInput {
   candidateDescription: string;
   targetProblem: string;
   attackAngle: KillAngle;
-  judgeProfile?: string; // only supplied for 'judge' angle
+  judgeProfile?: string;
   hackathonConstraints: string;
   round: number;
+  evidenceExcerpts?: string[]; // top evidence from research — kill must cite this for user angle
 }
 
 export interface KillRoundResult {
@@ -181,6 +182,40 @@ export interface GenerateFromPainMapInput {
   roundNumber: number;
 }
 
+// ── detectAnomalies ───────────────────────────────────────────────────────────
+
+export interface DetectAnomaliesInput {
+  evidenceExcerpts: string[]; // full page content from research phase
+  targetCommunity: string;
+}
+
+export interface AnomalySignalOutput {
+  observation: string;  // what was noticed: "people repeatedly do X"
+  sourceIndex: number;  // which excerpt it came from
+  why: string;          // initial guess at why — to guide follow-up
+  investigate: boolean; // worth following up?
+}
+
+export interface AnomalyDetectionOutput {
+  anomalies: AnomalySignalOutput[];
+  summary: string; // what unexpected patterns were found overall
+}
+
+// ── checkNovelty ──────────────────────────────────────────────────────────────
+
+export interface CheckNoveltyInput {
+  candidateTitle: string;
+  candidateDescription: string;
+  existingSolutionsFound: string[]; // URLs/names of existing solutions found by search
+}
+
+export interface NoveltyCheckResult {
+  existingSolutionsFound: string[];
+  isNovel: boolean;
+  differentiator: string; // what makes this different, if anything
+  noveltyRisk: "LOW" | "MEDIUM" | "HIGH"; // HIGH = very similar to something that exists
+}
+
 // ── AiProvider interface ──────────────────────────────────────────────────────
 
 export interface AiProvider {
@@ -189,6 +224,8 @@ export interface AiProvider {
   generateFromPainMap(input: GenerateFromPainMapInput): Promise<GeneratedCandidate[]>;
   buildPainMap(input: BuildPainMapInput): Promise<PainMap>;
   diagnoseFailures(input: DiagnoseFailuresInput): Promise<FailureDiagnosis>;
+  detectAnomalies(input: DetectAnomaliesInput): Promise<AnomalyDetectionOutput>;
+  checkNovelty(input: CheckNoveltyInput): Promise<NoveltyCheckResult>;
   killRound(input: KillRoundInput): Promise<KillRoundResult>;
   synthesizeJudgeProfile(input: JudgeProfileInput): Promise<JudgeProfileOutput>;
   extractStructuredFindings(input: ExtractFindingsInput): Promise<StructuredFindings>;

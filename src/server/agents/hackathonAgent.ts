@@ -111,6 +111,8 @@ export async function runHackathonAgent(
 
   // Dedup evidence by URL across all rounds
   const seenUrls = new Set<string>();
+  // evidenceExcerpts grows as research deepens — declared early so anomaly phase can extend it
+  let evidenceExcerpts: string[] = [];
 
   // Save evidence items to DB, skip already-seen URLs
   async function saveNewEvidence(items: { title: string; url: string; snippet: string; sourceType: string }[]) {
@@ -238,6 +240,62 @@ export async function runHackathonAgent(
 
     if (await checkStop()) return await abort(agentRunId, "Stopped by user after Phase 2");
 
+    // ── Phase 2.5: Anomaly detection ──────────────────────────────────────────
+    // Scan evidence for unexpected behavioral signals not explicitly searched for.
+    // These "unknown unknowns" become their own investigation threads.
+
+    const anomalyResult = await step(
+      "GENERATE",
+      "Scanning evidence for behavioral anomalies and unexpected signals",
+      () => ai.detectAnomalies({
+        // Use only snippets (not full page content) to keep this call small
+        evidenceExcerpts: uniqueEvidence.slice(0, 8).map(e => `${e.title}: ${e.snippet.slice(0, 200)}`),
+        targetCommunity: community,
+      }),
+      `${Math.min(uniqueEvidence.length, 8)} sources to scan`,
+    );
+
+    // Save anomalies to DB and add interesting ones to evidence excerpts for Pain Map
+    if (anomalyResult.anomalies.length > 0) {
+      for (const anomaly of anomalyResult.anomalies) {
+        try {
+          await prisma.anomalySignal.create({
+            data: {
+              agentRunId,
+              observation: anomaly.observation,
+              sourceUrl: uniqueEvidence[anomaly.sourceIndex]?.url,
+              why: anomaly.why,
+              investigate: anomaly.investigate,
+            },
+          });
+        } catch { /* non-fatal */ }
+      }
+
+      // Add anomalies as Observations on the Pain Case — they're real behavioral signals
+      const toInvestigate = anomalyResult.anomalies.filter(a => a.investigate).slice(0, 3);
+      if (toInvestigate.length > 0) {
+        await createObservation({
+          painCaseId: context.painCaseId,
+          content: `Anomaly signals detected: ${toInvestigate.map(a => a.observation).join("; ")}`,
+          context: `Auto-detected by PainLab agent — ${anomalyResult.summary}`,
+        });
+
+        // Follow up on top anomalies with targeted searches
+        for (const anomaly of toInvestigate.slice(0, 2)) {
+          const followUpQuery = `${community} ${anomaly.observation.split(" ").slice(0, 6).join(" ")}`;
+          const followUpResults = await step(
+            "SEARCH",
+            `Anomaly follow-up: "${followUpQuery.slice(0, 60)}"`,
+            () => research.findEvidence({ query: followUpQuery, maxResults: 3 }),
+            followUpQuery,
+          );
+          await saveNewEvidence(followUpResults.map(r => ({ ...r, sourceType: r.sourceType ?? "WEB" })));
+          // Add to evidence excerpts so Pain Map sees this signal
+          evidenceExcerpts.push(...followUpResults.slice(0, 2).map(r => `[ANOMALY] ${r.title}: ${r.snippet}`));
+        }
+      }
+    }
+
     // ── Phase 3: Judge profiling ───────────────────────────────────────────────
 
     const judgeProfileTexts: string[] = [];
@@ -296,7 +354,8 @@ export async function runHackathonAgent(
     // This is the key step that separates observation from solution generation.
 
     const constraints = [context.constraints ?? "", `Hackathon: ${context.hackathonName}`, "Solo developer, hackathon timeframe"].filter(Boolean).join(". ");
-    const evidenceExcerpts = uniqueEvidence.slice(0, 15).map(e => `${e.title}: ${e.snippet}`);
+    // Add current unique evidence to the excerpts list (anomaly phase may have already added some)
+    evidenceExcerpts.push(...uniqueEvidence.slice(0, 15).map(e => `${e.title}: ${e.snippet}`));
 
     const painMap = await step(
       "GENERATE",
@@ -410,6 +469,49 @@ export async function runHackathonAgent(
           survived: false,
         };
 
+        // ── Novelty check: search for existing solutions before full kill cycle
+        const existingSearch = await step(
+          "SEARCH",
+          `Novelty check: searching for existing solutions like "${candidate.title.slice(0, 40)}"`,
+          () => research.findEvidence({ query: `${candidate.title} existing app product solution`, maxResults: 3 }),
+          candidate.title,
+        );
+        const existingUrls = existingSearch.map(r => `${r.title}: ${r.url}`);
+
+        const noveltyResult = await step(
+          "CRITICIZE",
+          `Novelty check: is "${candidate.title.slice(0, 40)}" genuinely different from what exists?`,
+          () => ai.checkNovelty({
+            candidateTitle: candidate.title,
+            candidateDescription: candidate.description,
+            existingSolutionsFound: existingUrls,
+          }),
+          `${existingUrls.length} existing solutions found`,
+        );
+
+        if (noveltyResult.noveltyRisk === "HIGH") {
+          evaluated.survived = false;
+          evaluated.eliminationReason = `Novelty check: very similar to existing solutions — ${existingUrls.slice(0, 2).join(", ")}. ${noveltyResult.differentiator === "None identified" ? "No differentiator found." : noveltyResult.differentiator}`;
+          roundCandidates.push(evaluated);
+          allEvaluatedCandidates.push(evaluated);
+          await prisma.solutionCandidate.create({
+            data: {
+              agentRunId,
+              title: evaluated.title,
+              description: evaluated.description,
+              targetProblem: evaluated.targetProblem,
+              evidenceSources: evaluated.evidenceSources,
+              killRounds: evaluated.killRounds as unknown as import("@prisma/client").Prisma.JsonArray,
+              survived: false,
+              eliminationReason: evaluated.eliminationReason,
+            },
+          });
+          continue;
+        }
+
+        // Top evidence to pass into kill cycle for evidence-grounded verdicts
+        const topEvidenceExcerpts = uniqueEvidence.slice(0, 5).map(e => `${e.title}: ${e.snippet.slice(0, 200)}`);
+
         let stillAlive = true;
         for (let angleIdx = 0; angleIdx < angles.length; angleIdx++) {
           if (!stillAlive) break;
@@ -426,6 +528,7 @@ export async function runHackathonAgent(
               judgeProfile: angle === "judge" ? combinedJudgeProfile : undefined,
               hackathonConstraints: constraints,
               round: angleIdx + 1,
+              evidenceExcerpts: angle === "user" ? topEvidenceExcerpts : undefined,
             }),
             `${candidate.title} | ${angle}`,
           );
@@ -489,12 +592,10 @@ export async function runHackathonAgent(
       const killedThisRound = roundCandidates.filter(c => !c.survived);
       const killedTitles = killedThisRound.map(c => c.title);
       previousApproachesKilled.push(...killedTitles);
-      // Fire-and-forget — don't block the loop
       void appendKilledApproaches(context.id, killedTitles).catch(() => {});
 
       // All killed this round — diagnose and prepare next round
       if (round < MAX_ROUNDS) {
-        const killedThisRound = roundCandidates.filter(c => !c.survived);
         lastDiagnosis = await step(
           "CRITICIZE",
           `Round ${round} diagnosis: why all candidates failed, what to try next`,
