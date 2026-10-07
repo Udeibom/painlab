@@ -162,7 +162,7 @@ Return JSON:
   "candidates": [
     {
       "title": "string (max 8 words)",
-      "description": "string (2-3 sentences: what it does, who uses it, what problem it solves)",
+      "description": "string (2-3 sentences max: what it does, who uses it, what problem it solves)",
       "targetProblem": "string (1 sentence: the specific problem this solves)",
       "groundedIn": ["0", "3"]
     }
@@ -170,7 +170,7 @@ Return JSON:
 }`.trim();
 
     const result = await this.callJson<{ candidates: GeneratedCandidate[] }>(
-      SMART_MODEL, prompt, 1400
+      SMART_MODEL, prompt, 1600
     );
     return result.candidates ?? [];
   }
@@ -468,19 +468,19 @@ GENERATION RULES:
 
 Generate exactly ${Math.min(input.maxCandidates, 3)} candidates.
 
-Return JSON:
+Return JSON — description max 2 sentences, targetProblem max 1 sentence:
 {
   "candidates": [
     {
       "title": "string (max 8 words — specific, not generic)",
-      "description": "string: 'The current workaround is [X]. This makes it 10x better by [Y]. Specifically it does [Z] for [who].'",
-      "targetProblem": "Pain [N]: [the specific workaround failure this addresses]",
+      "description": "string: what it does and who it's for (2 sentences max)",
+      "targetProblem": "Pain [N]: the specific workaround failure this addresses (1 sentence)",
       "groundedIn": ["Pain 0"]
     }
   ]
-}`.trim();
+}}`.trim();
 
-    const result = await this.callJson<{ candidates: GeneratedCandidate[] }>(SMART_MODEL, prompt, 1400);
+    const result = await this.callJson<{ candidates: GeneratedCandidate[] }>(SMART_MODEL, prompt, 1600);
     return result.candidates ?? [];
   }
 
