@@ -475,12 +475,19 @@ GENERATION RULES:
 1. Each candidate must address pain(s) from the Pain Map — cite Pain 0, Pain 1, etc.
 2. The pain must be severe enough that people already pay money or bear real costs without a solution
 3. The solution must be technically possible for a developer to build
-4. It must use the hackathon's required technology (PayPal + AI) in a way that actually serves the solution — not forced
+4. It must use the hackathon's required technology (PayPal + AI) naturally — but PayPal and AI should serve the idea, not the other way around
 5. Do NOT generate anything that appears in the "already killed" list above
 6. Generate EXACTLY ${Math.min(input.maxCandidates, 3)} candidates structured as follows:
    - Candidate 1: The most grounded, evidence-backed option — addresses the clearest pain with the most direct solution
    - Candidate 2: A broader version — what if you addressed multiple related pains together for the same audience? What does a fuller product look like?
    - Candidate 3: The most ambitious version — if you could solve the deepest version of this problem, the one that would make someone's life substantially different, what would that be? Don't shrink it just because it's hard.
+
+WHAT "MEANINGFUL AI" LOOKS LIKE (important — ideas get killed for thin AI):
+- AI that makes decisions a human would otherwise make: which payment route is cheapest right now, is this transaction suspicious, what is the best time to convert this currency
+- AI that understands unstructured input: parsing a WhatsApp message to extract order details, reading an invoice PDF to extract line items, interpreting a freelancer's cash flow pattern
+- AI that learns from a specific user's history: "based on your last 30 payments, your clients in the US typically pay on day 14, not day 30"
+- AI that synthesizes across multiple data sources: combining PayPal transaction data + bank rates + client payment history to give a recommendation
+NOT meaningful AI: a chatbot that wraps an API, a rate lookup table, a simple rule-based notification
 
 Generate exactly ${Math.min(input.maxCandidates, 3)} candidates.
 

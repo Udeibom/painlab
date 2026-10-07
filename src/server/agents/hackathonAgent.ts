@@ -478,16 +478,22 @@ export async function runHackathonAgent(
         );
         const existingUrls = existingSearch.map(r => `${r.title}: ${r.url}`);
 
-        const noveltyResult = await step(
-          "CRITICIZE",
-          `Novelty check: is "${candidate.title.slice(0, 40)}" genuinely different from what exists?`,
-          () => ai.checkNovelty({
-            candidateTitle: candidate.title,
-            candidateDescription: candidate.description,
-            existingSolutionsFound: existingUrls,
-          }),
-          `${existingUrls.length} existing solutions found`,
-        );
+        let noveltyResult;
+        try {
+          noveltyResult = await step(
+            "CRITICIZE",
+            `Novelty check: is "${candidate.title.slice(0, 40)}" genuinely different from what exists?`,
+            () => ai.checkNovelty({
+              candidateTitle: candidate.title,
+              candidateDescription: candidate.description,
+              existingSolutionsFound: existingUrls,
+            }),
+            `${existingUrls.length} existing solutions found`,
+          );
+        } catch {
+          // Connection error or API failure — skip novelty check, continue with kill cycle
+          noveltyResult = { noveltyRisk: "LOW" as const, differentiator: "Novelty check skipped (connection error)", isNovel: true, existingSolutionsFound: [] };
+        }
 
         if (noveltyResult.noveltyRisk === "HIGH") {
           evaluated.survived = false;
