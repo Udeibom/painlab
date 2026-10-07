@@ -191,16 +191,17 @@ An adoption concern with no evidence citation is NOT a valid kill reason — it 
 VALID kill: evidence directly shows users rejected this type of approach before, OR the workaround this improves doesn't actually exist in the evidence.
 INVALID kill: general opinion that users might not trust it, might prefer something else, or might not care.`,
 
-      technical: `TECHNICAL ANGLE: Can one developer build a working demo of this in 48-72 hours?
-Focus on the hackathon demo scope — it needs to demonstrate the core mechanic, not be production-ready.
-IMPORTANT: Do NOT claim an API capability is unavailable unless you are certain. When uncertain, assume the data is available.
-VALID kill: the core mechanic requires an integration that takes weeks to approve (e.g., bank partnerships), OR requires compute impossible on free tiers.
-INVALID kill: "it would be complex", "it would need a lot of work", "it might not scale".`,
+      technical: `TECHNICAL ANGLE: Is this idea technically possible to build at all?
+The question is not about speed or demo scope — it is whether the core mechanic can exist.
+This hackathon may run for weeks or months. Do NOT kill something because it takes time to build.
+IMPORTANT: Do NOT claim an API capability is unavailable unless you are certain. When uncertain, assume the platform exposes the needed data.
+VALID kill: the core mechanic is fundamentally impossible — requires regulatory approval that will never come, relies on data that definitively does not exist, or requires infrastructure no individual developer can access at any price.
+INVALID kill: "it takes time to build", "the developer needs to apply for access", "it requires careful implementation", "it might not scale initially", "the demo scope is large". These are NOT fatal flaws.`,
 
       judge: `JUDGE ANGLE: Based on these specific judges: ${input.judgeProfile ?? "unknown judges"}
-Would this project score well on: technological implementation, coherent product experience, credible real-world impact, novelty?
-VALID kill: judges explicitly stated they don't want this type of project, OR the demo cannot show anything working in 3 minutes.
-INVALID kill: "judges might prefer something else", "it's not the most innovative possible thing".`,
+Would this project score well on: technological implementation quality, coherent product experience, credible real-world impact for a specific audience, and novelty?
+VALID kill: the project fundamentally conflicts with the hackathon's stated purpose, OR there is zero connection to the required technology (PayPal/AI).
+INVALID kill: "judges might prefer something else", "it's not the most innovative possible thing", "the demo might be rough".`,
     };
 
     const prompt = `

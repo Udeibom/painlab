@@ -353,7 +353,7 @@ export async function runHackathonAgent(
     // Build the structured pain map BEFORE generating any solutions.
     // This is the key step that separates observation from solution generation.
 
-    const constraints = [context.constraints ?? "", `Hackathon: ${context.hackathonName}`, "Solo developer, hackathon timeframe"].filter(Boolean).join(". ");
+    const constraints = [context.constraints ?? "", `Hackathon: ${context.hackathonName}`, "Must be buildable by a solo developer — timeline is flexible, focus on whether the idea is technically possible and genuinely valuable"].filter(Boolean).join(". ");
     // Add current unique evidence to the excerpts list (anomaly phase may have already added some)
     evidenceExcerpts.push(...uniqueEvidence.slice(0, 15).map(e => `${e.title}: ${e.snippet}`));
 

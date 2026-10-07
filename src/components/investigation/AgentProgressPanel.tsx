@@ -20,6 +20,7 @@ interface CandidateSummary {
   survivalReason: string | null;
   eliminationReason: string | null;
   judgeAlignmentScore: string | null;
+  judgeAlignmentReason: string | null;
 }
 
 interface RunData {
@@ -35,7 +36,7 @@ interface RunData {
 
 interface AgentProgressPanelProps {
   agentRunId: string;
-  onComplete?: () => void; // called when run is no longer RUNNING
+  onComplete?: () => void;
 }
 
 const stepTypeIcons: Record<string, string> = {
@@ -47,32 +48,10 @@ const stepTypeIcons: Record<string, string> = {
   CONCLUDE: "✦",
 };
 
-const stepTypeLabels: Record<string, string> = {
-  SEARCH: "Search",
-  READ_URL: "Read page",
-  GENERATE: "Generate",
-  CRITICIZE: "Kill round",
-  JUDGE_PROFILE: "Judge profile",
-  CONCLUDE: "Conclude",
-};
-
-const statusColors: Record<string, string> = {
-  RUNNING: "bg-amber-100 text-amber-800",
-  COMPLETED: "bg-emerald-100 text-emerald-800",
-  FAILED: "bg-red-100 text-red-800",
-  KILLED_ALL: "bg-stone-100 text-stone-600",
-};
-
-const statusLabels: Record<string, string> = {
-  RUNNING: "Running…",
-  COMPLETED: "Completed",
-  FAILED: "Failed",
-  KILLED_ALL: "No survivors",
-};
-
 export function AgentProgressPanel({ agentRunId, onComplete }: AgentProgressPanelProps) {
   const [data, setData] = useState<RunData | null>(null);
   const [stopping, setStopping] = useState(false);
+  const [showSteps, setShowSteps] = useState(false);
 
   const fetchData = useCallback(async () => {
     try {
@@ -80,20 +59,14 @@ export function AgentProgressPanel({ agentRunId, onComplete }: AgentProgressPane
       if (!res.ok) return;
       const json = (await res.json()) as RunData;
       setData(json);
-      if (json.status !== "RUNNING") {
-        onComplete?.();
-      }
-    } catch {
-      // network error — retry on next tick
-    }
+      if (json.status !== "RUNNING") onComplete?.();
+    } catch { /* retry next tick */ }
   }, [agentRunId, onComplete]);
 
   useEffect(() => {
     fetchData();
     const interval = setInterval(() => {
-      if (data?.status === "RUNNING" || !data) {
-        fetchData();
-      }
+      if (!data || data.status === "RUNNING") fetchData();
     }, 3000);
     return () => clearInterval(interval);
   }, [fetchData, data?.status]);
@@ -106,81 +79,125 @@ export function AgentProgressPanel({ agentRunId, onComplete }: AgentProgressPane
   }
 
   if (!data) {
-    return (
-      <div className="p-4 text-sm text-stone-500 animate-pulse">
-        Connecting to agent…
-      </div>
-    );
+    return <p className="text-sm text-stone-400 animate-pulse">Connecting to agent…</p>;
   }
 
-  const survivors = data.candidates.filter((c) => c.survived);
-  const killed = data.candidates.filter((c) => !c.survived);
+  const survivors = data.candidates.filter(c => c.survived);
+  const killed = data.candidates.filter(c => !c.survived);
+  const isRunning = data.status === "RUNNING";
+  const isDone = data.status === "COMPLETED" || data.status === "KILLED_ALL";
+  const isFailed = data.status === "FAILED";
+
+  // Work out what phase the agent is currently in
+  const lastStep = data.steps[data.steps.length - 1];
+  const searchCount = data.steps.filter(s => s.stepType === "SEARCH").length;
+  const readCount = data.steps.filter(s => s.stepType === "READ_URL").length;
+  const judgeCount = data.steps.filter(s => s.stepType === "JUDGE_PROFILE").length;
+  const critCount = data.steps.filter(s => s.stepType === "CRITICIZE").length;
 
   return (
-    <div className="space-y-4">
-      {/* Status header */}
+    <div className="space-y-5">
+
+      {/* ── Status bar ─────────────────────────────────────────────── */}
       <div className="flex items-center justify-between">
-        <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${statusColors[data.status] ?? statusColors.RUNNING}`}>
-          {data.status === "RUNNING" && (
-            <span className="h-1.5 w-1.5 rounded-full bg-amber-500 animate-pulse inline-block" />
-          )}
-          {statusLabels[data.status] ?? data.status}
-        </span>
-        {data.status === "RUNNING" && (
-          <button
-            onClick={handleStop}
-            disabled={stopping}
-            className="text-xs text-stone-400 hover:text-red-600 disabled:opacity-50"
-          >
-            {stopping ? "Stopping…" : "Stop agent"}
+        <div className="flex items-center gap-2">
+          {isRunning && <span className="h-2 w-2 rounded-full bg-amber-500 animate-pulse" />}
+          {isDone && survivors.length > 0 && <span className="text-emerald-600 text-base">✓</span>}
+          {isDone && survivors.length === 0 && <span className="text-stone-400 text-base">—</span>}
+          {isFailed && <span className="text-red-500 text-base">!</span>}
+          <span className="text-sm font-medium text-stone-700">
+            {isRunning ? "Investigating…" : isDone && survivors.length > 0 ? "Found survivors" : isDone ? "No survivors found" : "Agent error"}
+          </span>
+        </div>
+        {isRunning && (
+          <button onClick={handleStop} disabled={stopping}
+            className="text-xs text-stone-400 hover:text-red-500 disabled:opacity-40">
+            {stopping ? "Stopping…" : "Stop"}
           </button>
         )}
       </div>
 
-      {/* Progress counts */}
-      <div className="flex gap-4 text-xs text-stone-500">
-        <span>{data.steps.length} steps completed</span>
-        <span>{data.candidatesEvaluated} candidates evaluated</span>
-        <span>{data.candidatesSurvived} survived</span>
-      </div>
-
-      {/* Summary when done */}
-      {data.summary && data.status !== "RUNNING" && (
-        <div className={`rounded-md px-3 py-2 text-sm ${
-          data.status === "COMPLETED"
-            ? "bg-emerald-50 border border-emerald-200 text-emerald-800"
-            : data.status === "KILLED_ALL"
-            ? "bg-stone-50 border border-stone-200 text-stone-700"
-            : "bg-red-50 border border-red-200 text-red-800"
-        }`}>
-          {data.summary}
+      {/* ── Live progress while running ────────────────────────────── */}
+      {isRunning && (
+        <div className="space-y-1.5 text-xs text-stone-500">
+          {searchCount > 0 && <p>🔍 Searched {searchCount} queries, read {readCount} full pages</p>}
+          {judgeCount > 0 && <p>👤 Profiled {judgeCount / 2 | 0} judges from public posts</p>}
+          {data.candidatesEvaluated > 0 && <p>⚔ Tested {data.candidatesEvaluated} candidates — {critCount} kill rounds run</p>}
+          {lastStep && (
+            <p className="text-stone-400 italic">
+              {stepTypeIcons[lastStep.stepType] ?? "·"} {lastStep.description.slice(0, 70)}…
+            </p>
+          )}
         </div>
       )}
 
-      {/* Error */}
-      {data.errorMessage && data.status === "FAILED" && (
-        <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-xs text-red-700">
-          {data.errorMessage}
+      {/* ── Error ──────────────────────────────────────────────────── */}
+      {isFailed && data.errorMessage && (
+        <div className="rounded-md bg-red-50 border border-red-200 px-3 py-2 text-sm text-red-700">
+          <p className="font-medium mb-1">Something went wrong</p>
+          <p className="text-xs text-red-600">{data.errorMessage.slice(0, 200)}</p>
         </div>
       )}
 
-      {/* Survivors */}
+      {/* ── Survivors — shown prominently ──────────────────────────── */}
       {survivors.length > 0 && (
-        <div>
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-emerald-600 mb-2">
-            Survived the kill cycle
-          </h3>
-          <div className="space-y-2">
-            {survivors.map((c) => (
-              <div key={c.id} className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2">
-                <p className="text-sm font-medium text-stone-900">{c.title}</p>
-                <p className="text-xs text-stone-600 mt-0.5">{c.targetProblem}</p>
+        <div className="space-y-3">
+          <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
+            {survivors.length} idea{survivors.length > 1 ? "s" : ""} survived the investigation
+          </p>
+          {survivors.map(c => (
+            <div key={c.id} className="rounded-lg border border-emerald-300 bg-emerald-50 p-4 space-y-2">
+              <p className="font-semibold text-stone-900">{c.title}</p>
+              <p className="text-sm text-stone-700 leading-relaxed">{c.description}</p>
+              <div className="pt-1 border-t border-emerald-200 space-y-1">
+                <p className="text-xs text-stone-500">
+                  <span className="font-medium text-stone-600">Problem addressed: </span>
+                  {c.targetProblem}
+                </p>
                 {c.survivalReason && (
-                  <p className="text-xs text-emerald-700 mt-1">✓ {c.survivalReason}</p>
+                  <p className="text-xs text-emerald-700">
+                    <span className="font-medium">Why it survived: </span>
+                    {c.survivalReason}
+                  </p>
                 )}
                 {c.judgeAlignmentScore && (
-                  <p className="text-xs text-stone-500 mt-0.5">
-                    Judge alignment: {c.judgeAlignmentScore.toLowerCase()}
+                  <p className="text-xs text-stone-500">
+                    <span className="font-medium">Judge alignment: </span>
+                    {c.judgeAlignmentScore.toLowerCase()}
+                    {c.judgeAlignmentReason ? ` — ${c.judgeAlignmentReason}` : ""}
+                  </p>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* ── KILLED_ALL explanation ──────────────────────────────────── */}
+      {data.status === "KILLED_ALL" && (
+        <div className="rounded-md bg-stone-50 border border-stone-200 px-4 py-3 space-y-1">
+          <p className="text-sm font-medium text-stone-700">No ideas survived this round</p>
+          <p className="text-xs text-stone-500">
+            The agent tested {data.candidatesEvaluated} candidates and eliminated all of them.
+            The failure diagnoses in the timeline below explain what assumptions kept failing — those are the useful output.
+            Try running again with a more specific target community, or scroll the timeline to read what was learned.
+          </p>
+        </div>
+      )}
+
+      {/* ── Killed candidates — collapsible ────────────────────────── */}
+      {killed.length > 0 && isDone && (
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-stone-400 mb-2">
+            {killed.length} eliminated
+          </p>
+          <div className="space-y-2">
+            {killed.map(c => (
+              <div key={c.id} className="rounded-md border border-stone-200 bg-white px-3 py-2">
+                <p className="text-sm font-medium text-stone-700">{c.title}</p>
+                {c.eliminationReason && (
+                  <p className="text-xs text-stone-400 mt-1 leading-relaxed">
+                    {c.eliminationReason}
                   </p>
                 )}
               </div>
@@ -189,54 +206,28 @@ export function AgentProgressPanel({ agentRunId, onComplete }: AgentProgressPane
         </div>
       )}
 
-      {/* Killed candidates */}
-      {killed.length > 0 && (
-        <div>
-          <h3 className="text-xs font-semibold uppercase tracking-wide text-stone-400 mb-2">
-            Eliminated
-          </h3>
-          <div className="space-y-1.5">
-            {killed.map((c) => (
-              <div key={c.id} className="rounded-md border border-stone-200 bg-white px-3 py-2">
-                <p className="text-xs font-medium text-stone-700">{c.title}</p>
-                {c.eliminationReason && (
-                  <p className="text-xs text-stone-400 mt-0.5">{c.eliminationReason}</p>
-                )}
+      {/* ── Step log — collapsed by default ────────────────────────── */}
+      <div>
+        <button
+          onClick={() => setShowSteps(s => !s)}
+          className="text-xs text-stone-400 hover:text-stone-600 flex items-center gap-1"
+        >
+          <span>{showSteps ? "▾" : "▸"}</span>
+          {showSteps ? "Hide" : "Show"} agent steps ({data.steps.length} total — {searchCount} searches, {readCount} page reads)
+        </button>
+        {showSteps && (
+          <div className="mt-2 space-y-1 max-h-64 overflow-y-auto border-l-2 border-stone-100 pl-3">
+            {data.steps.map(step => (
+              <div key={step.id} className="flex items-start gap-2 text-xs text-stone-500">
+                <span className="flex-shrink-0">{stepTypeIcons[step.stepType] ?? "·"}</span>
+                <span>{step.description}</span>
               </div>
             ))}
+            {isRunning && (
+              <div className="text-xs text-amber-400 animate-pulse">⋯ working</div>
+            )}
           </div>
-        </div>
-      )}
-
-      {/* Step feed */}
-      <div>
-        <h3 className="text-xs font-semibold uppercase tracking-wide text-stone-400 mb-2">
-          Agent steps
-        </h3>
-        <div className="space-y-1 max-h-64 overflow-y-auto">
-          {data.steps.map((step) => (
-            <div key={step.id} className="flex items-start gap-2 text-xs text-stone-600">
-              <span className="flex-shrink-0 w-5 text-center" aria-hidden="true">
-                {stepTypeIcons[step.stepType] ?? "·"}
-              </span>
-              <div className="min-w-0">
-                <span className="font-medium text-stone-400 mr-1">
-                  {stepTypeLabels[step.stepType] ?? step.stepType}
-                </span>
-                <span className="text-stone-600">{step.description}</span>
-                {step.durationMs != null && (
-                  <span className="text-stone-300 ml-1">({step.durationMs}ms)</span>
-                )}
-              </div>
-            </div>
-          ))}
-          {data.status === "RUNNING" && (
-            <div className="flex items-center gap-2 text-xs text-amber-500 animate-pulse">
-              <span>⋯</span>
-              <span>Agent working…</span>
-            </div>
-          )}
-        </div>
+        )}
       </div>
     </div>
   );
