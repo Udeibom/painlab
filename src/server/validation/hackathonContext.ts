@@ -10,7 +10,7 @@ export const createHackathonContextSchema = z.object({
     .transform((s) =>
       s.split(",").map((j) => j.trim()).filter(Boolean),
     ),
-  targetCommunity: z.string().min(3, "Target community is required").max(300),
+  targetCommunity: z.string().max(300).optional().default(""),
   constraints: z.string().max(1000).optional(),
 });
 

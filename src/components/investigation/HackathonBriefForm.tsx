@@ -57,19 +57,21 @@ export function HackathonBriefForm({ onClose }: HackathonBriefFormProps) {
 
       <div>
         <label htmlFor="targetCommunity" className="block text-sm font-medium text-stone-700">
-          Who do you want to build for?
+          Who do you want to build for? <span className="text-stone-400 font-normal">(optional)</span>
         </label>
         <p className="text-xs text-stone-400">
-          Be specific. &quot;People&quot; is too broad. &quot;Out-of-school children in Kano&quot; is useful.
+          Leave blank and the agent will discover who to build for on its own.
+          Or point it in a direction — a region, an industry, a type of person.
+          Don&apos;t over-specify: &quot;Nigeria&quot; or &quot;freelancers in West Africa&quot; is enough.
+          The agent will find the specific group with the real pain.
         </p>
         <input
           id="targetCommunity"
           name="targetCommunity"
           type="text"
-          required
           maxLength={300}
           className="mt-1 w-full rounded-md border border-stone-300 px-3 py-2 text-sm focus:border-stone-500 focus:outline-none focus:ring-1 focus:ring-stone-500"
-          placeholder="e.g. Almajiri youth in northern Nigeria"
+          placeholder="e.g. Nigeria, freelancers in Africa, small businesses in Southeast Asia — or leave blank"
         />
       </div>
 

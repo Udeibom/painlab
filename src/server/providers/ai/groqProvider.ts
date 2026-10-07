@@ -184,25 +184,25 @@ Return JSON:
       : "";
 
     const angleInstructions: Record<string, string> = {
-      user: `USER ANGLE: Would the specific people described actually use this, given how they behave today?
-The question is whether the solution improves their existing workaround or asks them to change completely.
-EVIDENCE REQUIREMENT: If you claim users won't adopt this, you MUST cite specific evidence from the evidence list above.
-An adoption concern with no evidence citation is NOT a valid kill reason — it becomes survived=true.
-VALID kill: evidence directly shows users rejected this type of approach before, OR the workaround this improves doesn't actually exist in the evidence.
-INVALID kill: general opinion that users might not trust it, might prefer something else, or might not care.`,
+      user: `USER ANGLE: Is the friction this solves severe enough that people are already paying money, wasting significant time, or experiencing real consequences without a solution?
+The real test is not "would users adopt this?" — it is "are people already suffering without it?"
+Look at whether: people currently pay money (to others, in workarounds, in losses) because this problem exists, OR people tolerate meaningful ongoing cost/time/stress because they have no better option.
+EVIDENCE REQUIREMENT: If you claim the friction is not severe enough, cite specific evidence. No evidence = survived=true.
+VALID kill: evidence shows people are satisfied with their current workaround and it costs them nothing meaningful, OR the problem only occurs once and the user already has a one-time solution.
+INVALID kill: "users might not trust it", "adoption is uncertain", "the workaround already works" — a workaround that works but costs time, money, or reliability is still a real pain.`,
 
       technical: `TECHNICAL ANGLE: Is this idea technically possible to build at all?
 The question is not about speed or demo scope — it is whether the core mechanic can exist.
 This hackathon may run for weeks or months. Do NOT kill something because it takes time to build.
 IMPORTANT: Do NOT claim an API capability is unavailable unless you are certain. When uncertain, assume the platform exposes the needed data.
 VALID kill: the core mechanic is fundamentally impossible — requires regulatory approval that will never come, relies on data that definitively does not exist, or requires infrastructure no individual developer can access at any price.
-INVALID kill: "it takes time to build", "the developer needs to apply for access", "it requires careful implementation", "it might not scale initially", "the demo scope is large". These are NOT fatal flaws.`,
+INVALID kill: "it takes time to build", "needs API access application", "requires careful implementation", "might not scale". These are NOT fatal flaws.`,
 
       judge: `JUDGE ANGLE: Based on these specific judges: ${input.judgeProfile ?? "unknown judges"}
-Would this score well on: (1) technological implementation — genuine PayPal API usage plus meaningful AI, (2) potential impact — credible, specific real-world problem for a named audience, (3) innovation — genuinely different from existing tools?
-VALID kill: the project has zero meaningful PayPal integration, OR the "AI" is just a chatbot wrapper with no real intelligence, OR the problem is so generic that any existing product already solves it.
-INVALID kill: "judges might prefer something else", "demo could be rough", "it's not the most innovative thing possible".
-Be specific — name which judging criterion this fails or passes.`,
+Would this score well on: (1) technological implementation — genuine meaningful API usage plus real AI doing something non-trivial, (2) potential impact — a credible, specific real-world problem with real consequences for real people, (3) innovation — either new approach or significantly better execution of an existing idea with a clear gap in the market?
+VALID kill: the project has zero meaningful integration with the required tech, OR the AI is just a thin chatbot wrapper with no intelligence, OR there is already a mature well-adopted product solving exactly this for exactly this audience.
+INVALID kill: "judges might prefer something else", "not the most innovative possible", "demo might be rough".
+Name the specific criterion and whether it passes or fails.`,
     };
 
     const prompt = `
@@ -440,32 +440,33 @@ NEW ANGLE TO TRY: ${input.failureDiagnosis.newAngle}`
     const prompt = `
 You are generating hackathon candidates. Round ${input.roundNumber}.
 
-THE RULE FOR THIS ROUND:
-Every candidate must START from the "If workaround was 10x better" field in the Pain Map.
-Do NOT invent a new product category. Take what people already do and make it dramatically better.
+WHAT MAKES A STRONG CANDIDATE:
+A strong idea addresses a real, severe pain — something people already pay money, waste time, or suffer consequences over.
+It can address one deep pain or a cluster of related pains that affect the same people.
+It does not have to be simple or small — if the pain is real and the solution is compelling, it can be a full product.
+The "10x better workaround" framing is a guide, not a rule — use it when it fits, skip it when a bigger opportunity is visible.
 
-Example of the right thinking:
-- People manually reconcile PayPal fees in spreadsheets → "10x better" = app that does it automatically using PayPal's seller_receivable_breakdown API
-- People ask friends for money exchange advice → "10x better" = AI that gives the same advice instantly, using real rate data
-- People screenshot payment proofs and send via WhatsApp → "10x better" = auto-generates and sends a verified payment receipt via the same channel
+WHAT MAKES A WEAK CANDIDATE:
+An idea people could take or leave. Something that makes life slightly more convenient but doesn't address a real cost, loss, or consequence.
+Something that replaces a working system with marginal improvement.
 
 Target community: ${input.targetCommunity}
 Hackathon constraints: ${input.hackathonConstraints}
 ${failureContext}
 ${previouslyKilled}
 
-Pain Map:
+Pain Map (real evidence-backed pains):
 ${painList}
 
 Most promising direction: ${input.painMap.mostPromisingAngle}
 
 GENERATION RULES:
-1. Each candidate must cite which Pain entry it comes from (Pain 0, Pain 1, etc.)
-2. Each candidate must explicitly state: "The current workaround is X. This makes it 10x better by doing Y."
-3. The solution must be buildable as a working demo by one developer in 48-72 hours
-4. It must use the platform's EXISTING API capabilities — not try to bypass limitations
+1. Each candidate must address pain(s) from the Pain Map — cite Pain 0, Pain 1, etc.
+2. The pain must be severe enough that people already pay money or bear real costs without a solution
+3. The solution must be technically possible for a developer to build
+4. It must use the hackathon's required technology (PayPal + AI) in a way that actually serves the solution — not forced
 5. Do NOT generate anything that appears in the "already killed" list above
-6. Small, focused, specific > ambitious, broad, generic
+6. It can be a focused single-pain solution OR a broader product addressing a cluster of related pains
 
 Generate exactly ${Math.min(input.maxCandidates, 3)} candidates.
 
@@ -475,11 +476,11 @@ Return JSON — description max 2 sentences, targetProblem max 1 sentence:
     {
       "title": "string (max 8 words — specific, not generic)",
       "description": "string: what it does and who it's for (2 sentences max)",
-      "targetProblem": "Pain [N]: the specific workaround failure this addresses (1 sentence)",
+      "targetProblem": "Pain [N] (and [M] if applicable): the core pain(s) this addresses",
       "groundedIn": ["Pain 0"]
     }
   ]
-}}`.trim();
+}`.trim();
 
     const result = await this.callJson<{ candidates: GeneratedCandidate[] }>(SMART_MODEL, prompt, 1600);
     return result.candidates ?? [];
@@ -537,28 +538,26 @@ If anomalies found:
       : "No existing solutions were found in search.";
 
     const prompt = `
-Evaluate whether this hackathon candidate is genuinely novel given what already exists.
+Evaluate whether this hackathon candidate has a genuine gap in the market.
 
 Candidate: "${input.candidateTitle}"
 Description: ${input.candidateDescription}
 
 ${existingList}
 
-Questions to answer:
-1. Does something very similar already exist as a mature product?
-2. If similar things exist, what specifically would make this different?
-3. What is the novelty risk?
+The key question is NOT "does something like this exist?"
+The key question IS: "If something like this already exists, why isn't everyone already using it?"
 
 Novelty risk levels:
-- LOW: nothing closely similar exists, or this has a clear differentiator
-- MEDIUM: similar things exist but there's a meaningful gap this fills
-- HIGH: this is essentially the same as an existing mature product
+- LOW: nothing closely similar exists, OR similar things exist but they are expensive/inaccessible/missing a real feature the target users need
+- MEDIUM: similar products exist and work well, but there is a meaningful specific gap or audience this fills that they don't
+- HIGH: a mature, well-adopted, affordable product already solves exactly this for exactly this audience — there is no real gap
 
 Return JSON:
 {
   "existingSolutionsFound": ["product name only, max 5 words"],
   "isNovel": boolean,
-  "differentiator": "string: what makes this different, or 'None identified'",
+  "differentiator": "if LOW/MEDIUM: what gap exists that current solutions don't fill. If HIGH: why the existing solution already covers this completely.",
   "noveltyRisk": "LOW" | "MEDIUM" | "HIGH"
 }`.trim();
 
