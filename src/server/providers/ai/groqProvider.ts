@@ -94,6 +94,9 @@ export class GroqAiProvider implements AiProvider {
   // Produces search queries from a hackathon brief. Fast model, small output.
 
   async structurePainCase(input: StructurePainCaseInput): Promise<StructuredPainCaseOutput> {
+    // Truncate brief to 1500 chars — enough signal, avoids context overflow
+    const brief = (input.hackathonBrief ?? input.freeformDescription ?? "").slice(0, 1500);
+
     const isBroadTarget = !input.targetCommunity ||
       input.targetCommunity.split(" ").length <= 2 ||
       ["people", "users", "nigeria", "africa", "everyone"].some(w =>
@@ -108,7 +111,7 @@ export class GroqAiProvider implements AiProvider {
 Given this hackathon brief, produce search queries using COMPETING EXPLORER STRATEGIES.
 Different explorers find different things. Don't let one strategy dominate.
 
-Hackathon brief: ${input.hackathonBrief ?? input.freeformDescription}
+Hackathon brief: ${brief}
 ${communityInstruction}
 
 Generate exactly 8 search queries, one from each explorer type:
@@ -131,7 +134,7 @@ Return JSON:
   "searchQueries": ["short query 1", "short query 2", "short query 3", "short query 4", "short query 5", "short query 6", "short query 7", "short query 8"]
 }`.trim();
 
-    return this.callJson<StructuredPainCaseOutput>(FAST_MODEL, prompt, 1300);
+    return this.callJson<StructuredPainCaseOutput>(SMART_MODEL, prompt, 1300);
   }
 
   // ── generateCandidates ─────────────────────────────────────────────────────
