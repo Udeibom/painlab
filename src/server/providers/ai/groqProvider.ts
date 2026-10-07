@@ -121,17 +121,17 @@ Generate exactly 8 search queries, one from each explorer type:
 7. STAFF/ADJACENT PERSPECTIVE: what do people who serve [community] observe about their pain?
 8. NEGATIVE REVIEW HUNTER: what makes [community] leave 1-star reviews or abandon products?
 
-Each query must be specific enough to return real stories, not generic articles.
+Each query must be specific and SHORT — maximum 10 words. No quoted phrases. Use natural search language.
 
 Return JSON:
 {
   "title": "string (max 10 words)",
   "description": "string (one paragraph)",
   "tags": ["string"],
-  "searchQueries": ["q1", "q2", "q3", "q4", "q5", "q6", "q7", "q8"]
+  "searchQueries": ["short query 1", "short query 2", "short query 3", "short query 4", "short query 5", "short query 6", "short query 7", "short query 8"]
 }`.trim();
 
-    return this.callJson<StructuredPainCaseOutput>(FAST_MODEL, prompt, 1100);
+    return this.callJson<StructuredPainCaseOutput>(FAST_MODEL, prompt, 1300);
   }
 
   // ── generateCandidates ─────────────────────────────────────────────────────
@@ -199,9 +199,10 @@ VALID kill: the core mechanic is fundamentally impossible — requires regulator
 INVALID kill: "it takes time to build", "the developer needs to apply for access", "it requires careful implementation", "it might not scale initially", "the demo scope is large". These are NOT fatal flaws.`,
 
       judge: `JUDGE ANGLE: Based on these specific judges: ${input.judgeProfile ?? "unknown judges"}
-Would this project score well on: technological implementation quality, coherent product experience, credible real-world impact for a specific audience, and novelty?
-VALID kill: the project fundamentally conflicts with the hackathon's stated purpose, OR there is zero connection to the required technology (PayPal/AI).
-INVALID kill: "judges might prefer something else", "it's not the most innovative possible thing", "the demo might be rough".`,
+Would this score well on: (1) technological implementation — genuine PayPal API usage plus meaningful AI, (2) potential impact — credible, specific real-world problem for a named audience, (3) innovation — genuinely different from existing tools?
+VALID kill: the project has zero meaningful PayPal integration, OR the "AI" is just a chatbot wrapper with no real intelligence, OR the problem is so generic that any existing product already solves it.
+INVALID kill: "judges might prefer something else", "demo could be rough", "it's not the most innovative thing possible".
+Be specific — name which judging criterion this fails or passes.`,
     };
 
     const prompt = `
@@ -223,12 +224,12 @@ DECISION RULES:
 - "There's competition" is NEVER a fatal flaw
 - "It could be better" is NEVER a fatal flaw
 
-Return JSON — keep all string fields under 80 words each:
+Return JSON — keep all string fields under 60 words each:
 {
   "attackAngle": "${input.attackAngle}",
-  "attack": "1-2 sentences max: the specific criticism",
+  "attack": "1-2 sentences: the specific criticism naming what exactly is weak",
   "survived": boolean,
-  "reason": "1 sentence max: the fatal blocker OR why it passes"
+  "reason": "1 sentence: name the specific fatal blocker (if killed) OR which judging criterion this clearly passes and why (if survived) — no generic phrases like 'aligns with hackathon goals'"
 }`.trim();
 
     return this.callJson<KillRoundResult>(SMART_MODEL, prompt, 700);
