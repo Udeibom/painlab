@@ -241,9 +241,9 @@ DECISION RULES:
 Return JSON — keep all string fields under 60 words each:
 {
   "attackAngle": "${input.attackAngle}",
-  "attack": "1-2 sentences: the specific criticism naming what exactly is weak",
+  "attack": "max 20 words: name the weakness",
   "survived": boolean,
-  "reason": "1 sentence: name the specific fatal blocker (if killed) OR which judging criterion this clearly passes and why (if survived) — no generic phrases like 'aligns with hackathon goals'"
+  "reason": "max 20 words: the fatal blocker (if killed) OR which criterion passes (if survived)"
 }`.trim();
 
     return this.callJson<KillRoundResult>(SMART_MODEL, prompt, 700);

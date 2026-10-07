@@ -523,21 +523,39 @@ export async function runHackathonAgent(
           if (!stillAlive) break;
           const angle = angles[angleIdx]!;
 
-          const killResult = await step(
-            "CRITICIZE",
-            `Round ${round} kill — "${candidate.title}" — ${angle}`,
-            () => ai.killRound({
-              candidateTitle: candidate.title,
-              candidateDescription: candidate.description,
-              targetProblem: candidate.targetProblem,
+          let killResult;
+          try {
+            killResult = await step(
+              "CRITICIZE",
+              `Round ${round} kill — "${candidate.title}" — ${angle}`,
+              () => ai.killRound({
+                candidateTitle: candidate.title,
+                candidateDescription: candidate.description,
+                targetProblem: candidate.targetProblem,
+                attackAngle: angle,
+                judgeProfile: angle === "judge" ? combinedJudgeProfile : undefined,
+                hackathonConstraints: constraints,
+                round: angleIdx + 1,
+                evidenceExcerpts: angle === "user" ? topEvidenceExcerpts : undefined,
+              }),
+              `${candidate.title} | ${angle}`,
+            );
+          } catch {
+            // JSON truncation or connection error — default to survived=true for this angle
+            // so a transient failure doesn't kill a candidate unfairly
+            killResult = {
               attackAngle: angle,
-              judgeProfile: angle === "judge" ? combinedJudgeProfile : undefined,
-              hackathonConstraints: constraints,
-              round: angleIdx + 1,
-              evidenceExcerpts: angle === "user" ? topEvidenceExcerpts : undefined,
-            }),
-            `${candidate.title} | ${angle}`,
-          );
+              attack: "Kill round failed (connection/parse error) — defaulting to survived",
+              survived: true,
+              reason: "Error during evaluation — candidate passes this angle by default",
+            };
+            // Record the failed round in the step log
+            await addAgentStep(agentRunId, {
+              stepNumber: ++stepNumber,
+              stepType: "CRITICIZE",
+              description: `Round ${round} kill FAILED (error) — "${candidate.title}" — ${angle} — defaulting survived=true`,
+            });
+          }
 
           evaluated.killRounds.push({
             round: angleIdx + 1,
