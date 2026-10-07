@@ -39,7 +39,7 @@ export interface GeneratedCandidate {
 
 // ── killRound ────────────────────────────────────────────────────────────────
 
-export type KillAngle = "user" | "technical" | "judge";
+export type KillAngle = "user" | "technical" | "judge" | "impact";
 
 export interface KillRoundInput {
   candidateTitle: string;

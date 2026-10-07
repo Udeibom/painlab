@@ -455,7 +455,7 @@ export async function runHackathonAgent(
 
       // ── Kill cycle for this round's candidates
       const roundCandidates: EvaluatedCandidate[] = [];
-      const angles: Array<"user" | "technical" | "judge"> = ["user", "technical", "judge"].slice(0, env.AGENT_KILL_ROUNDS) as Array<"user" | "technical" | "judge">;
+      const angles: Array<"user" | "technical" | "judge" | "impact"> = ["user", "technical", "judge", "impact"];
 
       for (const candidate of candidates) {
         if (await checkStop()) return await abort(agentRunId, `Stopped by user during kill cycle round ${round}`);

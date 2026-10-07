@@ -203,6 +203,17 @@ Would this score well on: (1) technological implementation — genuine meaningfu
 VALID kill: the project has zero meaningful integration with the required tech, OR the AI is just a thin chatbot wrapper with no intelligence, OR there is already a mature well-adopted product solving exactly this for exactly this audience.
 INVALID kill: "judges might prefer something else", "not the most innovative possible", "demo might be rough".
 Name the specific criterion and whether it passes or fails.`,
+
+      impact: `IMPACT ANGLE: Is this idea genuinely compelling or just safe?
+This is the hardest question. Many ideas survive the other kill rounds because nothing is technically wrong with them. This round asks whether the idea is worth caring about.
+
+Ask three questions:
+1. WHO SPECIFICALLY experiences this pain acutely? Not "freelancers" — which freelancers, in what situation, experiencing what exact consequence? If you cannot name a specific sub-group experiencing this severely, the idea is probably too generic.
+2. WHAT IS THE REAL COST WITHOUT THIS? In money lost, time wasted, relationships damaged, or opportunities missed — is the absence of this solution something people actually feel? "Slightly inconvenient" is not a real cost. "Loses $200/month to fees they can't track", "misses cash flow problems before they become crises", "can't take on more clients because admin takes 10 hours a week" — those are real costs.
+3. WOULD SOMEONE TELL A FRIEND ABOUT THIS? If someone in the target audience found this product, would they tell others in their situation? Or would they say "oh that's useful" and forget about it? Products that spread are solving pains people talk about.
+
+VALID kill: the pain is genuinely mild — it doesn't cost money, doesn't have real consequences, and the current workaround works well enough that most people don't think about it. OR the specific audience experiencing it acutely is very small and unlikely to grow.
+INVALID kill: "the market is competitive", "it might be hard to monetize", "users are used to doing it manually". These are business concerns, not impact concerns.`,
     };
 
     const prompt = `
@@ -466,7 +477,10 @@ GENERATION RULES:
 3. The solution must be technically possible for a developer to build
 4. It must use the hackathon's required technology (PayPal + AI) in a way that actually serves the solution — not forced
 5. Do NOT generate anything that appears in the "already killed" list above
-6. It can be a focused single-pain solution OR a broader product addressing a cluster of related pains
+6. Generate EXACTLY ${Math.min(input.maxCandidates, 3)} candidates structured as follows:
+   - Candidate 1: The most grounded, evidence-backed option — addresses the clearest pain with the most direct solution
+   - Candidate 2: A broader version — what if you addressed multiple related pains together for the same audience? What does a fuller product look like?
+   - Candidate 3: The most ambitious version — if you could solve the deepest version of this problem, the one that would make someone's life substantially different, what would that be? Don't shrink it just because it's hard.
 
 Generate exactly ${Math.min(input.maxCandidates, 3)} candidates.
 
