@@ -15,6 +15,20 @@ import type {
   SummarizeEvidenceInput, EvidenceSummary,
 } from "./types";
 
+import { z } from "zod";
+import {
+  StructuredPainCaseOutputSchema,
+  PainMapSchema,
+  GeneratedCandidateSchema,
+  KillRoundResultSchema,
+  NoveltyCheckResultSchema,
+  FailureDiagnosisSchema,
+  AnomalyDetectionOutputSchema,
+  JudgeProfileOutputSchema,
+  StructuredFindingsSchema,
+  EvidenceSummarySchema,
+} from "./schemas";
+
 // Token-efficient prompting rules:
 // - Fast tasks (classification, short generation): llama-3.1-8b-instant
 // - Synthesis tasks (kill cycle, judge profile, findings): llama-3.3-70b-versatile
@@ -34,16 +48,17 @@ export class GroqAiProvider implements AiProvider {
     this.client = new Groq({ apiKey: env.GROQ_API_KEY });
   }
 
-  // Calls Groq and returns parsed JSON. Retries once on parse failure with stricter instruction.
+  // Calls Groq and returns parsed JSON validated against a runtime schema.
   private async callJson<T>(
     model: string,
     userPrompt: string,
     maxTokens: number,
+    schema?: z.ZodType<any, any, any>,
   ): Promise<T> {
     for (let attempt = 0; attempt < 2; attempt++) {
       const prompt = attempt === 0
         ? userPrompt
-        : userPrompt + "\n\nCRITICAL: Your previous response failed JSON parsing. Return ONLY the raw JSON object/array, absolutely nothing else — no markdown, no code fences, no explanation.";
+        : userPrompt + "\n\nCRITICAL: Your previous response failed JSON parsing or schema validation. Return ONLY the raw JSON object/array matching the schema, absolutely nothing else — no markdown, no code fences, no explanation.";
 
       const response = await this.client.chat.completions.create({
         model,
@@ -67,12 +82,10 @@ export class GroqAiProvider implements AiProvider {
 
       // If JSON appears truncated (ends without closing brace/bracket), try to repair
       if (cleaned && !cleaned.endsWith("}") && !cleaned.endsWith("]")) {
-        // Count open braces/brackets to determine what needs closing
         const opens = (cleaned.match(/[{[]/g) ?? []).length;
         const closes = (cleaned.match(/[}\]]/g) ?? []).length;
         const missing = opens - closes;
         if (missing > 0 && missing <= 5) {
-          // Truncate to last complete value, then close
           const lastComma = cleaned.lastIndexOf(",");
           const lastComplete = lastComma > cleaned.length * 0.7 ? cleaned.slice(0, lastComma) : cleaned;
           cleaned = lastComplete + "}".repeat(missing);
@@ -80,10 +93,21 @@ export class GroqAiProvider implements AiProvider {
       }
 
       try {
-        return JSON.parse(cleaned) as T;
-      } catch {
+        const parsed = JSON.parse(cleaned);
+        if (schema) {
+          const validated = schema.safeParse(parsed);
+          if (!validated.success) {
+            if (attempt === 1) {
+              throw new Error(`Groq response failed runtime schema validation: ${validated.error.message}. Raw: ${raw.slice(0, 500)}`);
+            }
+            continue;
+          }
+          return validated.data as T;
+        }
+        return parsed as T;
+      } catch (err) {
         if (attempt === 1) {
-        throw new Error(`Groq returned invalid JSON after 2 attempts. Raw: ${raw.slice(0, 500)}`);
+          throw err instanceof Error ? err : new Error(`Groq returned invalid JSON after 2 attempts. Raw: ${raw.slice(0, 500)}`);
         }
       }
     }
@@ -134,7 +158,7 @@ Return JSON:
   "searchQueries": ["short query 1", "short query 2", "short query 3", "short query 4", "short query 5", "short query 6", "short query 7", "short query 8"]
 }`.trim();
 
-    return this.callJson<StructuredPainCaseOutput>(SMART_MODEL, prompt, 1300);
+    return this.callJson<StructuredPainCaseOutput>(SMART_MODEL, prompt, 1300, StructuredPainCaseOutputSchema);
   }
 
   // ── generateCandidates ─────────────────────────────────────────────────────
@@ -172,8 +196,9 @@ Return JSON:
   ]
 }`.trim();
 
+    const CandidateArraySchema = z.object({ candidates: z.array(GeneratedCandidateSchema).default([]) });
     const result = await this.callJson<{ candidates: GeneratedCandidate[] }>(
-      SMART_MODEL, prompt, 1600
+      SMART_MODEL, prompt, 1600, CandidateArraySchema
     );
     return result.candidates ?? [];
   }
@@ -246,7 +271,7 @@ Return JSON — keep all string fields under 60 words each:
   "reason": "max 20 words: the fatal blocker (if killed) OR which criterion passes (if survived)"
 }`.trim();
 
-    return this.callJson<KillRoundResult>(SMART_MODEL, prompt, 700);
+    return this.callJson<KillRoundResult>(SMART_MODEL, prompt, 700, KillRoundResultSchema);
   }
 
   // ── synthesizeJudgeProfile ─────────────────────────────────────────────────
@@ -273,7 +298,7 @@ Return JSON:
 
 If there is insufficient information, return confidence: "LOW" with your best guess.`.trim();
 
-    return this.callJson<JudgeProfileOutput>(SMART_MODEL, prompt, 400);
+    return this.callJson<JudgeProfileOutput>(SMART_MODEL, prompt, 400, JudgeProfileOutputSchema);
   }
 
   // ── extractStructuredFindings ──────────────────────────────────────────────
@@ -309,7 +334,7 @@ Return JSON with:
   ]
 }`.trim();
 
-    return this.callJson<StructuredFindings>(SMART_MODEL, prompt, 1200);
+    return this.callJson<StructuredFindings>(SMART_MODEL, prompt, 1200, StructuredFindingsSchema);
   }
 
   // ── buildPainMap ───────────────────────────────────────────────────────────
@@ -364,7 +389,7 @@ Return JSON:
 
 2-3 pain entries only. Every field must be grounded in the evidence. 1-2 sentences max per field.`.trim();
 
-    const result = await this.callJson<PainMap>(SMART_MODEL, prompt, 2400);
+    const result = await this.callJson<PainMap>(SMART_MODEL, prompt, 2400, PainMapSchema);
     return { ...result, pains: result.pains ?? [] };
   }
 
@@ -420,7 +445,7 @@ Return JSON:
   "newAngle": "one sentence: the fundamentally different approach the next round should take"
 }`.trim();
 
-    return this.callJson<FailureDiagnosis>(SMART_MODEL, prompt, 800);
+    return this.callJson<FailureDiagnosis>(SMART_MODEL, prompt, 800, FailureDiagnosisSchema);
   }
 
   // ── generateFromPainMap ────────────────────────────────────────────────────
@@ -506,7 +531,8 @@ Return JSON — description max 2 sentences, targetProblem max 1 sentence:
   ]
 }`.trim();
 
-    const result = await this.callJson<{ candidates: GeneratedCandidate[] }>(SMART_MODEL, prompt, 1600);
+    const CandidateArraySchema = z.object({ candidates: z.array(GeneratedCandidateSchema).default([]) });
+    const result = await this.callJson<{ candidates: GeneratedCandidate[] }>(SMART_MODEL, prompt, 1600, CandidateArraySchema);
     return result.candidates ?? [];
   }
 
@@ -543,7 +569,7 @@ If anomalies found:
 }`.trim();
 
     try {
-      const result = await this.callJson<AnomalyDetectionOutput>(FAST_MODEL, prompt, 500);
+      const result = await this.callJson<AnomalyDetectionOutput>(FAST_MODEL, prompt, 500, AnomalyDetectionOutputSchema);
       return { anomalies: result.anomalies ?? [], summary: result.summary ?? "No anomalies detected" };
     } catch {
       // Non-fatal — anomaly detection is an enhancement, not a blocker
@@ -585,7 +611,7 @@ Return JSON:
   "noveltyRisk": "LOW" | "MEDIUM" | "HIGH"
 }`.trim();
 
-    return this.callJson<NoveltyCheckResult>(SMART_MODEL, prompt, 600);
+    return this.callJson<NoveltyCheckResult>(SMART_MODEL, prompt, 600, NoveltyCheckResultSchema);
   }
 
   // ── summarizeEvidence (legacy) ─────────────────────────────────────────────
@@ -603,6 +629,6 @@ ${list}
 Return JSON:
 { "summary": "string", "disagreements": ["string"] }`.trim();
 
-    return this.callJson<EvidenceSummary>(FAST_MODEL, prompt, 300);
+    return this.callJson<EvidenceSummary>(FAST_MODEL, prompt, 300, EvidenceSummarySchema);
   }
 }

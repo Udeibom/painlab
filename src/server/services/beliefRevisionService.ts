@@ -73,8 +73,15 @@ export async function linkEvidenceToHypothesis(options: LinkEvidenceOptions) {
   });
 }
 
+import {
+  evaluateBeliefQualityState,
+  type EvidenceItemForAssessment,
+} from "./evidenceQualityService";
+
 /**
  * Evaluates the belief state of a hypothesis based on its linked evidence and experiment results.
+ * Accounts for source reliability, independence, directness, and contradictory findings.
+ * Never marks a hypothesis as supported merely because supporting evidence exists.
  */
 export function computeBeliefState(params: {
   currentStatus: HypothesisStatus;
@@ -83,10 +90,30 @@ export function computeBeliefState(params: {
   experimentsAsExpected: number;
   experimentsUnexpected: number;
   experimentsInconclusive: number;
+  hypothesisStatement?: string;
+  supportingEvidence?: EvidenceItemForAssessment[];
+  contradictingEvidence?: EvidenceItemForAssessment[];
 }): {
   recommendedStatus: HypothesisStatus;
   reason: string;
 } {
+  // If rich evidence objects are available, use full quality assessment
+  if (params.supportingEvidence && params.contradictingEvidence) {
+    const assessment = evaluateBeliefQualityState({
+      hypothesisStatement: params.hypothesisStatement ?? "Hypothesis",
+      currentStatus: params.currentStatus,
+      supportingEvidence: params.supportingEvidence,
+      contradictingEvidence: params.contradictingEvidence,
+      experimentsAsExpected: params.experimentsAsExpected,
+      experimentsUnexpected: params.experimentsUnexpected,
+      experimentsInconclusive: params.experimentsInconclusive,
+    });
+    return {
+      recommendedStatus: assessment.recommendedStatus as HypothesisStatus,
+      reason: assessment.rationale,
+    };
+  }
+
   const {
     supportsCount,
     contradictsCount,
@@ -94,7 +121,7 @@ export function computeBeliefState(params: {
     experimentsUnexpected,
   } = params;
 
-  const totalSupport = supportsCount + experimentsAsExpected * 2; // Experiments carry high empirical weight
+  const totalSupport = supportsCount + experimentsAsExpected * 2;
   const totalContradiction = contradictsCount + experimentsUnexpected * 2;
 
   if (totalSupport === 0 && totalContradiction === 0) {
@@ -104,17 +131,24 @@ export function computeBeliefState(params: {
     };
   }
 
-  if (totalSupport > 0 && totalContradiction === 0) {
-    return {
-      recommendedStatus: "SUPPORTED",
-      reason: `Empirically supported by ${supportsCount} evidence item(s) and ${experimentsAsExpected} confirming experiment(s) with no contradictions.`,
-    };
-  }
-
   if (totalContradiction > 0 && totalSupport === 0) {
     return {
       recommendedStatus: "CONTRADICTED",
       reason: `Directly contradicted by ${contradictsCount} evidence item(s) and ${experimentsUnexpected} disconfirming experiment(s).`,
+    };
+  }
+
+  if (totalSupport > 0 && totalContradiction === 0) {
+    // Strict integrity rule: Single unverified support source does NOT warrant SUPPORTED
+    if (experimentsAsExpected === 0 && supportsCount < 2) {
+      return {
+        recommendedStatus: "INSUFFICIENT_EVIDENCE",
+        reason: `Supporting evidence exists (${supportsCount} item), but single-source evidence is insufficient without independent corroboration; preserving uncertainty.`,
+      };
+    }
+    return {
+      recommendedStatus: "SUPPORTED",
+      reason: `Empirically supported by ${supportsCount} evidence item(s) and ${experimentsAsExpected} confirming experiment(s) with no contradictions.`,
     };
   }
 
@@ -204,6 +238,13 @@ export async function reviseBeliefsForCase(
       (e) => e.result?.outcome === "INCONCLUSIVE",
     ).length;
 
+    const supportingEvidence = hypothesis.evidenceLinks
+      .filter((l) => l.relation === "SUPPORTS")
+      .map((l) => l.evidence);
+    const contradictingEvidence = hypothesis.evidenceLinks
+      .filter((l) => l.relation === "CONTRADICTS")
+      .map((l) => l.evidence);
+
     const { recommendedStatus, reason } = computeBeliefState({
       currentStatus: hypothesis.status,
       supportsCount,
@@ -211,6 +252,9 @@ export async function reviseBeliefsForCase(
       experimentsAsExpected,
       experimentsUnexpected,
       experimentsInconclusive,
+      hypothesisStatement: hypothesis.statement,
+      supportingEvidence,
+      contradictingEvidence,
     });
 
     const isUserAuthored = hypothesis.createdBy === "USER";

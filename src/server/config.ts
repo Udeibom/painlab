@@ -9,6 +9,7 @@ const envSchema = z.object({
   TAVILY_API_KEY: z.string().min(1),
   // Agent tuning — all optional with sane defaults
   AGENT_MAX_CANDIDATES: z.coerce.number().int().min(1).max(10).default(5),
+  AGENT_MAX_ROUNDS: z.coerce.number().int().min(1).max(10).default(3),
   AGENT_KILL_ROUNDS: z.coerce.number().int().min(1).max(5).default(3),
   AGENT_SEARCH_DEPTH: z.coerce.number().int().min(3).max(20).default(10),
 });

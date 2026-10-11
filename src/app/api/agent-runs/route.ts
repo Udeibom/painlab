@@ -13,8 +13,12 @@ import { createAgentRun } from "@/server/services/agentRunService";
 import { runHackathonAgent } from "@/server/agents/hackathonAgent";
 import { GroqAiProvider } from "@/server/providers/ai/groqProvider";
 import { TavilyResearchProvider } from "@/server/providers/research/tavilyProvider";
+import { recoverStalledRuns } from "@/server/services/jobRecoveryService";
 
 export async function POST(req: NextRequest) {
+  // Opportunistically clean up any stalled runs from prior process restarts
+  void recoverStalledRuns().catch(() => {});
+
   const formData = await req.formData();
 
   const raw = {

@@ -45,15 +45,20 @@ import {
 import {
   generateUncertaintyDrivenQueries,
   detectUnproductiveSearch,
+  computeModelUncertainty,
   type SearchAttemptRecord,
 } from "../services/uncertaintyResearchService";
+import {
+  verifyCandidateDeterministically,
+  type SolutionLifecycleStage,
+} from "../services/candidateVerificationService";
 import { retrieveRelevantPriorFindings } from "../services/crossInvestigationMemoryService";
 import type { AiProvider, PainMap, FailureDiagnosis } from "../providers/ai/types";
 import type { TavilyResearchProvider } from "../providers/research/tavilyProvider";
 import type { HackathonContext, Confidence } from "@prisma/client";
 import { env } from "../config";
 
-const MAX_ROUNDS = 3;
+const MAX_ROUNDS = env.AGENT_MAX_ROUNDS;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -76,6 +81,7 @@ export interface EvaluatedCandidate {
   killRounds: KillRoundRecord[];
   survived: boolean;
   evaluationOutcome: EvaluationOutcome;
+  lifecycleStage: SolutionLifecycleStage;
   survivalReason?: string;
   eliminationReason?: string;
   judgeAlignmentScore?: string;
@@ -496,8 +502,10 @@ export async function runHackathonAgent(
           ...lastDiagnosis.newSearchQueries,
         ].slice(0, 5);
 
-        // Check for repeated unproductive searches
-        const searchCheck = detectUnproductiveSearch(searchHistory);
+        const prevMetrics = computeModelUncertainty(hypothesisSummaries, currentPainMap);
+
+        // Check for repeated unproductive searches (including content overlap)
+        const searchCheck = detectUnproductiveSearch(searchHistory, evidenceExcerpts);
         let queriesToRun = combinedQueries;
         if (searchCheck.isUnproductive) {
           await createObservation({
@@ -522,6 +530,7 @@ export async function runHackathonAgent(
             resultsCount: newResults.length,
             freshCount,
             urls: newResults.map((r) => r.url),
+            snippets: newResults.map((r) => r.snippet),
           });
           evidenceExcerpts.push(...newResults.slice(0, 3).map((r) => `${r.title}: ${r.snippet}`));
         }
@@ -544,6 +553,29 @@ export async function runHackathonAgent(
 
         // Run belief revision on the accumulated case evidence
         await reviseBeliefsForCase(context.painCaseId, { preserveUserConclusions: true });
+
+        // Track uncertainty reduction after new evidence and pain map refresh
+        const updatedHypotheses = await prisma.hypothesis.findMany({
+          where: { painCaseId: context.painCaseId },
+          include: { evidenceLinks: true },
+        });
+        const updatedMetrics = computeModelUncertainty(
+          updatedHypotheses.map((h) => ({
+            id: h.id,
+            statement: h.statement,
+            status: h.status,
+            supportsCount: h.evidenceLinks.filter((l) => l.relation === "SUPPORTS").length,
+            contradictsCount: h.evidenceLinks.filter((l) => l.relation === "CONTRADICTS").length,
+          })),
+          currentPainMap,
+        );
+        const deltaUncertainty = prevMetrics.uncertaintyScore - updatedMetrics.uncertaintyScore;
+        await createObservation({
+          painCaseId: context.painCaseId,
+          content: `Round ${round} uncertainty tracking: model uncertainty transitioned from ${prevMetrics.uncertaintyScore} to ${updatedMetrics.uncertaintyScore} (reduction: ${deltaUncertainty.toFixed(1)} pts). ${deltaUncertainty > 0 ? "Empirical data reduced model uncertainty." : "Model uncertainty plateaued."}`,
+          context: "Uncertainty Reduction Tracking",
+          source: "AI",
+        });
       }
 
       // Generate candidates using currentPainMap (updated problem model)
@@ -581,9 +613,10 @@ export async function runHackathonAgent(
           killRounds: [],
           survived: false,
           evaluationOutcome: "INCONCLUSIVE",
+          lifecycleStage: "PROPOSED",
         };
 
-        // ── Novelty check: search for existing solutions
+        // ── Novelty & Competitor check: search for existing solutions
         const existingSearch = await step(
           "SEARCH",
           `Novelty check: searching for existing solutions like "${candidate.title.slice(0, 40)}"`,
@@ -591,6 +624,37 @@ export async function runHackathonAgent(
           candidate.title,
         );
         const existingUrls = existingSearch.map((r) => `${r.title}: ${r.url}`);
+
+        // Deterministic Verification (constraints, feasibility, competitor collision)
+        const deterministicVerification = verifyCandidateDeterministically({
+          title: candidate.title,
+          description: candidate.description,
+          targetProblem: candidate.targetProblem,
+          hackathonConstraints: constraints,
+          existingCompetitorUrls: existingUrls,
+        });
+
+        if (!deterministicVerification.isVerifiablyFeasible) {
+          evaluated.survived = false;
+          evaluated.evaluationOutcome = "FAIL";
+          evaluated.lifecycleStage = "PROPOSED";
+          evaluated.eliminationReason = `Deterministic verification failed: ${deterministicVerification.summary}`;
+          roundCandidates.push(evaluated);
+          allEvaluatedCandidates.push(evaluated);
+          await prisma.solutionCandidate.create({
+            data: {
+              agentRunId,
+              title: evaluated.title,
+              description: evaluated.description,
+              targetProblem: evaluated.targetProblem,
+              evidenceSources: evaluated.evidenceSources,
+              killRounds: evaluated.killRounds as unknown as import("@prisma/client").Prisma.JsonArray,
+              survived: false,
+              eliminationReason: evaluated.eliminationReason,
+            },
+          });
+          continue;
+        }
 
         let noveltyOutcome: EvaluationOutcome = "INCONCLUSIVE";
         let noveltyResult: {
@@ -731,6 +795,7 @@ export async function runHackathonAgent(
         if (stillAlive) {
           evaluated.survived = true;
           evaluated.evaluationOutcome = "PASS";
+          evaluated.lifecycleStage = "EVALUATED";
           const lastKill = evaluated.killRounds[evaluated.killRounds.length - 1];
           evaluated.survivalReason = lastKill?.reason ?? "Survived all kill rounds";
           const judgeKill = evaluated.killRounds.find((r) => r.attackAngle === "judge");

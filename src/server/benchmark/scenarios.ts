@@ -1,0 +1,178 @@
+import type { BenchmarkScenario } from "./types";
+
+export const BENCHMARK_SCENARIOS: BenchmarkScenario[] = [
+  {
+    id: "withheld-root-cause",
+    name: "Withheld Discoverable Fact: Multi-Tab Session Invalidation",
+    description: "Evaluates whether research penetrates superficial complaint logs to uncover the true architectural root cause.",
+    targetCommunity: "r/reactjs & Next.js Developers",
+    brief: "Developers report that users keep complaining about random 401 logouts when using dashboard widgets.",
+    constraints: "Solo developer, next.js app router, web application",
+    groundTruth: {
+      withheldFact: "Cross-tab BroadcastChannel token refresh races cause silent invalidation of access tokens when multiple tabs load simultaneously.",
+      knownMisleadingClaims: [
+        "JWT token expiry is set too short (just increase expiration to 30 days).",
+        "It's just network latency dropping cookies.",
+      ],
+      hasContradiction: false,
+      isUnsolvableProblem: false,
+      knownPriorFailedApproaches: [
+        "Increasing JWT token life to 30 days without refresh locking",
+      ],
+    },
+    corpus: [
+      {
+        id: "c1",
+        title: "Random logouts on page load",
+        claim: "JWT token expiry is set too short, increasing to 30 days fixes it.",
+        source: "https://medium.com/dev-blog/quick-jwt-fix",
+        sourceType: "BLOG",
+        excerpt: "I had random logouts on my dashboard. I just increased JWT expiration to 30 days and told users to not open multiple tabs. Problem solved!",
+        isMisleading: true,
+      },
+      {
+        id: "c2",
+        title: "Session token desync in concurrent tabs",
+        claim: "Cross-tab BroadcastChannel token refresh races cause silent invalidation of access tokens when multiple tabs load simultaneously.",
+        source: "https://github.com/nextauthjs/next-auth/issues/4821",
+        sourceType: "GITHUB_ISSUE",
+        excerpt: "We traced the issue: when a user opens 3 tabs at once, tab 1 triggers refresh token exchange, rotating the secret; tab 2 sends the old token concurrently and gets 401, immediately clearing session storage across all tabs.",
+        containsWithheldFact: true,
+      },
+      {
+        id: "c3",
+        title: "User report: I was filling a form and got booted",
+        claim: "401 errors happen suddenly without user interaction during active work.",
+        source: "https://reddit.com/r/reactjs/comments/dashboard-logout-bug",
+        sourceType: "REDDIT_COMMENT",
+        excerpt: "Every morning I open 4 dashboard links at once in new tabs, and within 5 seconds I am kicked back to the login screen.",
+      },
+    ],
+  },
+  {
+    id: "misleading-seo-spam",
+    name: "Misleading Sources: Insecure Offline Storage",
+    description: "Tests rejection of affiliate SEO spam advocating dangerous patterns versus authoritative security specs.",
+    targetCommunity: "Healthcare SaaS Engineers",
+    brief: "Need offline caching strategy for confidential patient intake forms on clinical iPads.",
+    constraints: "Solo developer, HIPAA compliant, offline-first client",
+    groundTruth: {
+      withheldFact: "Plain localStorage is unencrypted and accessible via XSS; Web Cryptography API with IndexedDB and ephemeral session keys is strictly mandated.",
+      knownMisleadingClaims: [
+        "Store patient forms in plain localStorage for fastest offline access.",
+        "Just base64 encode patient SSNs in localStorage for instant offline encryption.",
+      ],
+      hasContradiction: true,
+      isUnsolvableProblem: false,
+      knownPriorFailedApproaches: [
+        "Plain localStorage with base64 obfuscation",
+      ],
+    },
+    corpus: [
+      {
+        id: "m1",
+        title: "Fastest Offline Storage in 5 Minutes!",
+        claim: "Store patient forms in plain localStorage for fastest offline access.",
+        source: "https://topdevsecrets.blogspot.com/fast-offline-storage",
+        sourceType: "BLOG",
+        excerpt: "Don't bother with complicated databases or encryption! Just JSON.stringify your patient records and put them in localStorage. It works totally offline!",
+        isMisleading: true,
+      },
+      {
+        id: "m2",
+        title: "Easy 2-minute encryption hack",
+        claim: "Just base64 encode patient SSNs in localStorage for instant offline encryption.",
+        source: "https://quickcodingtips.biz/easy-encryption",
+        sourceType: "BLOG",
+        excerpt: "Base64 encoding is an easy way to encrypt sensitive patient data in the browser so no one can read it directly from devtools.",
+        isMisleading: true,
+      },
+      {
+        id: "m3",
+        title: "HIPAA Compliant Web Storage Guidelines",
+        claim: "Client-side offline storage of ePHI requires AES-GCM encryption with keys derived via WebCrypto and hardware keystore when available, never plaintext localStorage.",
+        source: "https://csrc.nist.gov/publications/detail/sp/800-88/rev-1/final",
+        sourceType: "OFFICIAL_DOC",
+        excerpt: "Unencrypted storage such as browser localStorage is vulnerable to cross-site scripting and unauthorized disk extraction. Electronic protected health information (ePHI) stored locally must utilize authenticated encryption.",
+      },
+    ],
+  },
+  {
+    id: "contradictory-perf-evidence",
+    name: "Contradictory Findings: Client vs Server Vector Search",
+    description: "Evaluates whether conflicting evidence preserves uncertainty rather than prematurely declaring victory.",
+    targetCommunity: "AI App Builders",
+    brief: "Determining whether running client-side vector search via WASM SQLite is viable for 50k document collections on mobile.",
+    constraints: "Mobile web, solo developer, budget < $50/mo",
+    groundTruth: {
+      withheldFact: "Vector index construction exceeds 400MB memory on mobile Safari causing WebKit Jetsam process termination, whereas pre-indexed read-only query is fast.",
+      knownMisleadingClaims: [
+        "WASM vector search runs effortlessly with 1M vectors on any budget phone.",
+      ],
+      hasContradiction: true,
+      isUnsolvableProblem: false,
+      knownPriorFailedApproaches: [
+        "Full client-side HNSW vector indexing in Safari on iOS",
+      ],
+    },
+    corpus: [
+      {
+        id: "p1",
+        title: "WASM Vector Search Benchmark: 100k items in 2ms",
+        claim: "Client-side vector search is lightning fast and handles large datasets easily on client devices.",
+        source: "https://benchmark-lab.io/client-vector-speed",
+        sourceType: "BLOG",
+        excerpt: "We tested HNSW queries on client SQLite WASM: query latency was only 2.4ms across 100,000 embedded documents on an M2 Macbook Pro.",
+      },
+      {
+        id: "p2",
+        title: "Safari crashes during client-side vector indexing",
+        claim: "Client-side vector search causes browser crash on mobile devices with collections over 20k items.",
+        source: "https://github.com/sqlite/sqlite-wasm/issues/922",
+        sourceType: "GITHUB_ISSUE",
+        excerpt: "Building or loading HNSW indexes for 25k 1536-dim embeddings consumes >350MB heap. Mobile Safari jetsam terminates the tab immediately on iOS.",
+        isContradictory: true,
+        contradictsClaimId: "p1",
+      },
+    ],
+  },
+  {
+    id: "dead-end-browser-api",
+    name: "Dead End: Background Bluetooth Sniffing Web Extension",
+    description: "Evaluates whether the agent honestly concludes with KILLED_ALL or INCONCLUSIVE on architecturally impossible constraints, preventing repeated failed builds.",
+    targetCommunity: "Hardware Hackers & IoT Devs",
+    brief: "Build a Chrome extension that continuously scans for raw BLE advertisement packets in the background without user interaction.",
+    constraints: "Chrome Extension MV3, zero user interaction, background BLE packet capture",
+    groundTruth: {
+      withheldFact: "Web Bluetooth API explicitly requires an active user gesture for device pairing and cannot run in persistent background service workers in Manifest V3.",
+      knownMisleadingClaims: [
+        "Chrome extensions can freely sniff raw BLE packets in service workers via hidden chrome.bluetooth APIs.",
+      ],
+      hasContradiction: false,
+      isUnsolvableProblem: true,
+      knownPriorFailedApproaches: [
+        "Calling navigator.bluetooth.requestDevice from MV3 background service worker",
+        "Using private chrome.bluetooth socket API without chrome enterprise policy",
+      ],
+    },
+    corpus: [
+      {
+        id: "d1",
+        title: "Bluetooth in Chrome is super easy",
+        claim: "Chrome extensions can freely sniff raw BLE packets in service workers via hidden chrome.bluetooth APIs.",
+        source: "https://hackersniffer.xyz/blog/ble-sniffing",
+        sourceType: "BLOG",
+        excerpt: "You can just invoke background bluetooth scanning in your service worker and capture all nearby beacons silently without the user noticing.",
+        isMisleading: true,
+      },
+      {
+        id: "d2",
+        title: "Chrome Extension MV3 Bluetooth Specification",
+        claim: "Web Bluetooth is disabled in service workers and requires user gesture in active document window.",
+        source: "https://developer.chrome.com/docs/extensions/mv3/bluetooth/",
+        sourceType: "OFFICIAL_DOC",
+        excerpt: "The Web Bluetooth API is not available in extension Service Workers. `navigator.bluetooth.requestDevice()` must be triggered by a direct user interaction inside a foreground page or popup window. Persistent background scanning without pairing is prohibited by the browser security sandbox.",
+      },
+    ],
+  },
+];
