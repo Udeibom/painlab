@@ -3,22 +3,27 @@
  *
  * Architecture: Pain Map + Iterative Kill→Learn→Regenerate loop (max 3 rounds)
  *
- * Phase 1  — Brief analysis + adversarial search query generation
+ * Phase 1  — Brief analysis + adversarial search query generation + cross-investigation memory
  * Phase 2  — Community need discovery (deep, adversarial queries)
+ * Phase 2.5— Anomaly detection + belief revision
  * Phase 3  — Judge profiling
  * Phase 4  — Pain Map construction (WHO, WHAT, WORKAROUND, WHY IT FAILS, GAP)
  * Phase 5+ — Per-round loop (max MAX_ROUNDS):
- *               Generate from Pain Map → Kill cycle
- *               If all killed: Diagnose failures → new search queries → more research → next round
+ *               Update Pain Map from accumulated evidence
+ *               Generate from updated Pain Map → Fail-closed Kill cycle (PASS / FAIL / INCONCLUSIVE)
+ *               If all killed: Diagnose failures → uncertainty-driven research → next round
  *               If survivors: go to Phase 6
- * Phase 6  — Conclude (surface survivors or honest KILLED_ALL with full trail)
+ * Phase 6  — Conclude (surface survivors with explicit evidence requirements & planned experiments,
+ *               or honest KILLED_ALL with full trail; run belief revision)
  *
- * Design invariants (see spec-v2-agent-layer.md):
+ * Design invariants:
  * - Every step is written to AgentStep before+after — fully auditable
  * - All AI output labeled source=AI / createdBy=AI — never attributed to user
  * - KILLED_ALL is an honest final outcome — no manufactured fallback
- * - Stop-check between every phase — user can abort gracefully
- * - max_tokens set on every LLM call — token budget is respected
+ * - Fail-closed: evaluation errors are NEVER treated as success (explicit PASS, FAIL, INCONCLUSIVE)
+ * - Surviving criticism is clearly distinguished from empirical validation
+ * - Prior findings across investigations are bounded to context, not universal facts
+ * - User hypotheses and conclusions are never silently overwritten
  */
 
 import { prisma } from "../db";
@@ -32,6 +37,17 @@ import { createEvidence } from "../services/evidenceService";
 import { createObservation } from "../services/observationService";
 import { createHypothesis } from "../services/hypothesisService";
 import { createLearning } from "../services/learningService";
+import { createExperiment } from "../services/experimentService";
+import {
+  reviseBeliefsForCase,
+  introduceHypothesisClaim,
+} from "../services/beliefRevisionService";
+import {
+  generateUncertaintyDrivenQueries,
+  detectUnproductiveSearch,
+  type SearchAttemptRecord,
+} from "../services/uncertaintyResearchService";
+import { retrieveRelevantPriorFindings } from "../services/crossInvestigationMemoryService";
 import type { AiProvider, PainMap, FailureDiagnosis } from "../providers/ai/types";
 import type { TavilyResearchProvider } from "../providers/research/tavilyProvider";
 import type { HackathonContext, Confidence } from "@prisma/client";
@@ -41,25 +57,53 @@ const MAX_ROUNDS = 3;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-interface KillRoundRecord {
+export type EvaluationOutcome = "PASS" | "FAIL" | "INCONCLUSIVE";
+
+export interface KillRoundRecord {
   round: number;
   attackAngle: string;
   attack: string;
+  outcome: EvaluationOutcome;
   survived: boolean;
   reason: string;
 }
 
-interface EvaluatedCandidate {
+export interface EvaluatedCandidate {
   title: string;
   description: string;
   targetProblem: string;
   evidenceSources: string[];
   killRounds: KillRoundRecord[];
   survived: boolean;
+  evaluationOutcome: EvaluationOutcome;
   survivalReason?: string;
   eliminationReason?: string;
   judgeAlignmentScore?: string;
   judgeAlignmentReason?: string;
+  empiricalAssumptions?: string[];
+  evidenceRequirements?: string[];
+}
+
+/**
+ * Retries a transient asynchronous operation with backoff.
+ */
+export async function withRetry<T>(
+  fn: () => Promise<T>,
+  maxRetries = 2,
+  baseDelayMs = 200,
+): Promise<T> {
+  let lastErr: unknown;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastErr = err;
+      if (attempt < maxRetries) {
+        await new Promise((resolve) => setTimeout(resolve, baseDelayMs * Math.pow(2, attempt)));
+      }
+    }
+  }
+  throw lastErr;
 }
 
 // ── Main orchestrator ─────────────────────────────────────────────────────────
@@ -111,12 +155,12 @@ export async function runHackathonAgent(
 
   // Dedup evidence by URL across all rounds
   const seenUrls = new Set<string>();
-  // evidenceExcerpts grows as research deepens — declared early so anomaly phase can extend it
   let evidenceExcerpts: string[] = [];
+  const searchHistory: SearchAttemptRecord[] = [];
 
   // Save evidence items to DB, skip already-seen URLs
   async function saveNewEvidence(items: { title: string; url: string; snippet: string; sourceType: string }[]) {
-    const fresh = items.filter(e => !seenUrls.has(e.url));
+    const fresh = items.filter((e) => !seenUrls.has(e.url));
     for (const ev of fresh) {
       seenUrls.add(ev.url);
       try {
@@ -136,9 +180,7 @@ export async function runHackathonAgent(
   }
 
   try {
-    // ── Phase 1: Brief analysis + adversarial query generation ────────────────
-    // Generate not just "find needs" queries but also workaround queries,
-    // "why existing solutions failed" queries, and constraint queries.
+    // ── Phase 1: Brief analysis + adversarial query generation + prior memories ──
 
     const structured = await step(
       "GENERATE",
@@ -158,8 +200,26 @@ export async function runHackathonAgent(
       });
     }
 
-    // Standard queries + adversarial queries built from the community name
     const community = context.targetCommunity;
+
+    // Retrieve prior findings across investigations (Bounded Context)
+    const priorMemory = await retrieveRelevantPriorFindings({
+      currentPainCaseId: context.painCaseId,
+      targetCommunity: community,
+      tags: structured.tags ?? [],
+      limit: 6,
+    });
+
+    if (priorMemory.memories.length > 0) {
+      await createObservation({
+        painCaseId: context.painCaseId,
+        content: `Retrieved ${priorMemory.memories.length} relevant prior findings from past investigations (context-bounded heuristics; not universal facts).`,
+        context: "Cross-Investigation Memory Retrieval",
+        source: "AI",
+      });
+    }
+
+    // Standard queries + adversarial queries built from the community name
     const adversarialQueries = [
       `${community} problems complaints daily life`,
       `${community} what do they currently use instead`,
@@ -177,8 +237,6 @@ export async function runHackathonAgent(
     if (await checkStop()) return await abort(agentRunId, "Stopped by user after Phase 1");
 
     // ── Phase 2: Deep community need discovery ────────────────────────────────
-    // Run queries, then READ full pages for top results — not just snippets.
-    // This is what makes the evidence granular instead of headline-level.
 
     const allEvidence: { title: string; url: string; snippet: string; sourceType: string }[] = [];
 
@@ -190,7 +248,6 @@ export async function runHackathonAgent(
         query,
       );
 
-      // Read full pages for top 2 results per query — this is the depth change
       const enriched = await step(
         "READ_URL",
         `Reading top pages for: "${query.slice(0, 50)}"`,
@@ -198,7 +255,7 @@ export async function runHackathonAgent(
         `${results.length} results to enrich`,
       );
 
-      allEvidence.push(...enriched.map(r => ({ ...r, sourceType: r.sourceType ?? "WEB" })));
+      allEvidence.push(...enriched.map((r) => ({ ...r, sourceType: r.sourceType ?? "WEB" })));
 
       // Reddit via Tavily for community/pain queries
       const firstWord = community.split(" ")[0] ?? "";
@@ -209,7 +266,6 @@ export async function runHackathonAgent(
           () => research.searchReddit(query),
           `reddit:${query}`,
         );
-        // Read top Reddit result too
         if (redditResults.length > 0) {
           const enrichedReddit = await step(
             "READ_URL",
@@ -217,45 +273,48 @@ export async function runHackathonAgent(
             () => research.readTopResults(redditResults, 1),
             redditResults[0]?.url ?? "",
           );
-          allEvidence.push(...enrichedReddit.map(r => ({ ...r, sourceType: "REDDIT" })));
+          allEvidence.push(...enrichedReddit.map((r) => ({ ...r, sourceType: "REDDIT" })));
         }
       }
     }
 
     // Dedup
     const seen = new Set<string>();
-    const uniqueEvidence = allEvidence.filter(e => {
+    const uniqueEvidence = allEvidence.filter((e) => {
       if (seen.has(e.url)) return false;
       seen.add(e.url);
       return true;
     });
 
     const savedCount = await saveNewEvidence(uniqueEvidence.slice(0, 15));
+    searchHistory.push({
+      query: allQueries[0] ?? community,
+      resultsCount: allEvidence.length,
+      freshCount: savedCount,
+      urls: uniqueEvidence.map((e) => e.url),
+    });
 
     await createObservation({
       painCaseId: context.painCaseId,
-      content: `Agent searched ${allQueries.slice(0, 8).length} queries with full page reads on top results. Found ${uniqueEvidence.length} unique sources for "${community}". Saved ${savedCount} evidence items. Evidence includes full page content, not just headlines.`,
+      content: `Agent searched ${allQueries.slice(0, 8).length} queries with full page reads on top results. Found ${uniqueEvidence.length} unique sources for "${community}". Saved ${savedCount} evidence items.`,
       context: "Auto-generated by PainLab agent — verify sources",
+      source: "AI",
     });
 
     if (await checkStop()) return await abort(agentRunId, "Stopped by user after Phase 2");
 
     // ── Phase 2.5: Anomaly detection ──────────────────────────────────────────
-    // Scan evidence for unexpected behavioral signals not explicitly searched for.
-    // These "unknown unknowns" become their own investigation threads.
 
     const anomalyResult = await step(
       "GENERATE",
       "Scanning evidence for behavioral anomalies and unexpected signals",
       () => ai.detectAnomalies({
-        // Use only snippets (not full page content) to keep this call small
-        evidenceExcerpts: uniqueEvidence.slice(0, 8).map(e => `${e.title}: ${e.snippet.slice(0, 200)}`),
+        evidenceExcerpts: uniqueEvidence.slice(0, 8).map((e) => `${e.title}: ${e.snippet.slice(0, 200)}`),
         targetCommunity: community,
       }),
       `${Math.min(uniqueEvidence.length, 8)} sources to scan`,
     );
 
-    // Save anomalies to DB and add interesting ones to evidence excerpts for Pain Map
     if (anomalyResult.anomalies.length > 0) {
       for (const anomaly of anomalyResult.anomalies) {
         try {
@@ -271,16 +330,15 @@ export async function runHackathonAgent(
         } catch { /* non-fatal */ }
       }
 
-      // Add anomalies as Observations on the Pain Case — they're real behavioral signals
-      const toInvestigate = anomalyResult.anomalies.filter(a => a.investigate).slice(0, 3);
+      const toInvestigate = anomalyResult.anomalies.filter((a) => a.investigate).slice(0, 3);
       if (toInvestigate.length > 0) {
         await createObservation({
           painCaseId: context.painCaseId,
-          content: `Anomaly signals detected: ${toInvestigate.map(a => a.observation).join("; ")}`,
+          content: `Anomaly signals detected: ${toInvestigate.map((a) => a.observation).join("; ")}`,
           context: `Auto-detected by PainLab agent — ${anomalyResult.summary}`,
+          source: "AI",
         });
 
-        // Follow up on top anomalies with targeted searches
         for (const anomaly of toInvestigate.slice(0, 2)) {
           const followUpQuery = `${community} ${anomaly.observation.split(" ").slice(0, 6).join(" ")}`;
           const followUpResults = await step(
@@ -289,9 +347,8 @@ export async function runHackathonAgent(
             () => research.findEvidence({ query: followUpQuery, maxResults: 3 }),
             followUpQuery,
           );
-          await saveNewEvidence(followUpResults.map(r => ({ ...r, sourceType: r.sourceType ?? "WEB" })));
-          // Add to evidence excerpts so Pain Map sees this signal
-          evidenceExcerpts.push(...followUpResults.slice(0, 2).map(r => `[ANOMALY] ${r.title}: ${r.snippet}`));
+          await saveNewEvidence(followUpResults.map((r) => ({ ...r, sourceType: r.sourceType ?? "WEB" })));
+          evidenceExcerpts.push(...followUpResults.slice(0, 2).map((r) => `[ANOMALY] ${r.title}: ${r.snippet}`));
         }
       }
     }
@@ -324,7 +381,7 @@ export async function runHackathonAgent(
         );
       }
 
-      const excerpts = [...judgeResults.map(r => r.snippet), ...(fullContent ? [fullContent.slice(0, 600)] : [])].filter(Boolean);
+      const excerpts = [...judgeResults.map((r) => r.snippet), ...(fullContent ? [fullContent.slice(0, 600)] : [])].filter(Boolean);
 
       const profile = await step(
         "JUDGE_PROFILE",
@@ -335,7 +392,7 @@ export async function runHackathonAgent(
 
       await saveJudgeProfile(context.id, {
         judgeName,
-        sourceUrls: judgeResults.map(r => r.url),
+        sourceUrls: judgeResults.map((r) => r.url),
         inferredValues: profile.inferredValues,
         inferredPreferences: profile.inferredPreferences,
         rawExcerpts: excerpts.slice(0, 4),
@@ -350,39 +407,44 @@ export async function runHackathonAgent(
     if (await checkStop()) return await abort(agentRunId, "Stopped by user after Phase 3");
 
     // ── Phase 4: Pain Map construction ────────────────────────────────────────
-    // Build the structured pain map BEFORE generating any solutions.
-    // This is the key step that separates observation from solution generation.
 
-    const constraints = [context.constraints ?? "", `Hackathon: ${context.hackathonName}`, "Must be buildable by a solo developer — timeline is flexible, focus on whether the idea is technically possible and genuinely valuable"].filter(Boolean).join(". ");
-    // Add current unique evidence to the excerpts list (anomaly phase may have already added some)
-    evidenceExcerpts.push(...uniqueEvidence.slice(0, 15).map(e => `${e.title}: ${e.snippet}`));
+    const constraints = [
+      context.constraints ?? "",
+      `Hackathon: ${context.hackathonName}`,
+      "Must be buildable by a solo developer — timeline is flexible, focus on whether the idea is technically possible and genuinely valuable",
+      priorMemory.formattedPromptGuidance,
+    ].filter(Boolean).join(". ");
 
-    const painMap = await step(
+    evidenceExcerpts.push(...uniqueEvidence.slice(0, 15).map((e) => `${e.title}: ${e.snippet}`));
+
+    let currentPainMap = await step(
       "GENERATE",
-      "Building Pain Map: who, what, workaround, why workaround fails, gap",
+      "Building initial Pain Map: who, what, workaround, why workaround fails, gap",
       () => ai.buildPainMap({ targetCommunity: community, evidenceExcerpts, hackathonConstraints: constraints }),
       `${evidenceExcerpts.length} excerpts`,
     );
 
     // Persist pain map on the run record
-    await updateAgentRun(agentRunId, { painMap: painMap as unknown as import("@prisma/client").Prisma.InputJsonValue });
+    await updateAgentRun(agentRunId, { painMap: currentPainMap as unknown as import("@prisma/client").Prisma.InputJsonValue });
 
-    if (!painMap.pains || painMap.pains.length === 0) {
+    if (!currentPainMap.pains || currentPainMap.pains.length === 0) {
       return await conclude(agentRunId, context.painCaseId, [], ai, context,
         "Agent could not extract distinct pains from evidence. The community description may be too broad — try being more specific about who exactly and what exactly.");
     }
 
     if (await checkStop()) return await abort(agentRunId, "Stopped by user after Phase 4");
 
-    // ── Phase 5+: Iterative generate → kill → diagnose → research → regenerate
+    // ── Phase 5+: Iterative generate → kill → diagnose → research → regenerate ──
 
     let allEvaluatedCandidates: EvaluatedCandidate[] = [];
     let allSurvivors: EvaluatedCandidate[] = [];
 
-    // Load previously killed approaches from this context (accumulated across all past runs)
-    const previousApproachesKilled: string[] = context.previousApproachesKilled ?? [];
+    // Accumulate killed approaches across past runs + this context
+    const previousApproachesKilled: string[] = [
+      ...(context.previousApproachesKilled ?? []),
+      ...priorMemory.killedApproachesAcrossInvestigations,
+    ];
 
-    // Seed failure diagnosis for round 1 (empty — no previous round)
     let lastDiagnosis: FailureDiagnosis = {
       commonFailurePattern: "First round — no prior failures",
       falsifiedAssumption: "None yet",
@@ -396,64 +458,115 @@ export async function runHackathonAgent(
 
       await updateAgentRun(agentRunId, { investigationRound: round });
 
-      // ── Generate candidates (round 1: from raw evidence; rounds 2+: from pain map + diagnosis)
-      let candidates;
-      if (round === 1) {
-        candidates = await step(
-          "GENERATE",
-          `Round ${round}: generating ${env.AGENT_MAX_CANDIDATES} candidates from Pain Map`,
-          () => ai.generateFromPainMap({
-            painMap,
-            targetCommunity: community,
-            hackathonConstraints: constraints,
-            failureDiagnosis: lastDiagnosis,
-            previousApproachesKilled,
-            maxCandidates: env.AGENT_MAX_CANDIDATES,
-            roundNumber: round,
-          }),
-          `round ${round}, pain map has ${painMap.pains.length} entries`,
-        );
-      } else {
-        // Subsequent rounds: search the new queries from the diagnosis first
-        if (lastDiagnosis.newSearchQueries.length > 0) {
-          for (const query of lastDiagnosis.newSearchQueries.slice(0, 4)) {
-            const newResults = await step(
-              "SEARCH",
-              `Round ${round} targeted search: "${query}"`,
-              () => research.findEvidence({ query, maxResults: 5 }),
-              query,
-            );
-            const freshCount = await saveNewEvidence(newResults.map(r => ({ ...r, sourceType: r.sourceType ?? "WEB" })));
-            // Add new evidence to our working set for generation
-            evidenceExcerpts.push(...newResults.slice(0, 3).map(r => `${r.title}: ${r.snippet}`));
-            if (freshCount > 0) {
-              // Note: no observation spam — just log in the step
-            }
-          }
+      if (round > 1) {
+        // ── Uncertainty-Driven Research + Diagnosis Queries ──
+        const caseHypotheses = await prisma.hypothesis.findMany({
+          where: { painCaseId: context.painCaseId },
+          include: { evidenceLinks: true },
+        });
+
+        const hypothesisSummaries = caseHypotheses.map((h) => ({
+          id: h.id,
+          statement: h.statement,
+          status: h.status,
+          supportsCount: h.evidenceLinks.filter((l) => l.relation === "SUPPORTS").length,
+          contradictsCount: h.evidenceLinks.filter((l) => l.relation === "CONTRADICTS").length,
+        }));
+
+        const uncertainty = generateUncertaintyDrivenQueries({
+          targetCommunity: community,
+          hypotheses: hypothesisSummaries,
+          painMap: currentPainMap,
+          previousQueries: allQueries,
+          maxQueries: 3,
+        });
+
+        if (uncertainty.gaps.length > 0) {
+          await createObservation({
+            painCaseId: context.painCaseId,
+            content: `Round ${round} uncertainty analysis identified ${uncertainty.gaps.length} information gaps or competing explanations. Prioritizing discriminating inquiries: ${uncertainty.prioritizedQueries.slice(0, 2).join("; ")}`,
+            context: "Uncertainty-Driven Research",
+            source: "AI",
+          });
         }
 
-        candidates = await step(
+        // Combine diagnosis queries and uncertainty queries
+        const combinedQueries = [
+          ...uncertainty.prioritizedQueries,
+          ...lastDiagnosis.newSearchQueries,
+        ].slice(0, 5);
+
+        // Check for repeated unproductive searches
+        const searchCheck = detectUnproductiveSearch(searchHistory);
+        let queriesToRun = combinedQueries;
+        if (searchCheck.isUnproductive) {
+          await createObservation({
+            painCaseId: context.painCaseId,
+            content: `Search unproductivity detected: ${searchCheck.reason}. Strategy pivot: ${searchCheck.suggestedPivot}`,
+            context: "Search Strategy Pivot",
+            source: "AI",
+          });
+          queriesToRun = combinedQueries.map((q) => `${q} informal workaround real forum complaints`);
+        }
+
+        for (const query of queriesToRun.slice(0, 4)) {
+          const newResults = await step(
+            "SEARCH",
+            `Round ${round} targeted search: "${query}"`,
+            () => research.findEvidence({ query, maxResults: 5 }),
+            query,
+          );
+          const freshCount = await saveNewEvidence(newResults.map((r) => ({ ...r, sourceType: r.sourceType ?? "WEB" })));
+          searchHistory.push({
+            query,
+            resultsCount: newResults.length,
+            freshCount,
+            urls: newResults.map((r) => r.url),
+          });
+          evidenceExcerpts.push(...newResults.slice(0, 3).map((r) => `${r.title}: ${r.snippet}`));
+        }
+
+        // ISSUE 1 FIX: Rebuild the problem model (Pain Map) from accumulated evidence!
+        currentPainMap = await step(
           "GENERATE",
-          `Round ${round}: generating ${env.AGENT_MAX_CANDIDATES} candidates from updated Pain Map (new angle: ${lastDiagnosis.newAngle.slice(0, 60)})`,
-          () => ai.generateFromPainMap({
-            painMap,
+          `Round ${round}: Updating problem model (Pain Map) from ${evidenceExcerpts.length} accumulated evidence excerpts`,
+          () => ai.buildPainMap({
             targetCommunity: community,
+            evidenceExcerpts,
             hackathonConstraints: constraints,
-            failureDiagnosis: lastDiagnosis,
-            previousApproachesKilled,
-            maxCandidates: env.AGENT_MAX_CANDIDATES,
-            roundNumber: round,
           }),
-          `round ${round}, angle: ${lastDiagnosis.newAngle.slice(0, 80)}`,
+          `${evidenceExcerpts.length} accumulated excerpts`,
         );
+
+        await updateAgentRun(agentRunId, {
+          painMap: currentPainMap as unknown as import("@prisma/client").Prisma.InputJsonValue,
+        });
+
+        // Run belief revision on the accumulated case evidence
+        await reviseBeliefsForCase(context.painCaseId, { preserveUserConclusions: true });
       }
 
+      // Generate candidates using currentPainMap (updated problem model)
+      const candidates = await step(
+        "GENERATE",
+        `Round ${round}: generating ${env.AGENT_MAX_CANDIDATES} candidates from updated Pain Map (angle: ${lastDiagnosis.newAngle.slice(0, 60)})`,
+        () => ai.generateFromPainMap({
+          painMap: currentPainMap,
+          targetCommunity: community,
+          hackathonConstraints: constraints,
+          failureDiagnosis: lastDiagnosis,
+          previousApproachesKilled,
+          maxCandidates: env.AGENT_MAX_CANDIDATES,
+          roundNumber: round,
+        }),
+        `round ${round}, pain map has ${currentPainMap.pains.length} entries`,
+      );
+
       if (!candidates || candidates.length === 0) {
-        // LLM couldn't generate — move on
         break;
       }
 
-      // ── Kill cycle for this round's candidates
+      // ── Fail-closed Kill cycle for this round's candidates ─────────────────
       const roundCandidates: EvaluatedCandidate[] = [];
       const angles: Array<"user" | "technical" | "judge" | "impact"> = ["user", "technical", "judge", "impact"];
 
@@ -464,40 +577,63 @@ export async function runHackathonAgent(
           title: candidate.title,
           description: candidate.description,
           targetProblem: candidate.targetProblem,
-          evidenceSources: (candidate.groundedIn ?? []).map(g => String(g)),
+          evidenceSources: (candidate.groundedIn ?? []).map((g) => String(g)),
           killRounds: [],
           survived: false,
+          evaluationOutcome: "INCONCLUSIVE",
         };
 
-        // ── Novelty check: search for existing solutions before full kill cycle
+        // ── Novelty check: search for existing solutions
         const existingSearch = await step(
           "SEARCH",
           `Novelty check: searching for existing solutions like "${candidate.title.slice(0, 40)}"`,
           () => research.findEvidence({ query: `${candidate.title} existing app product solution`, maxResults: 3 }),
           candidate.title,
         );
-        const existingUrls = existingSearch.map(r => `${r.title}: ${r.url}`);
+        const existingUrls = existingSearch.map((r) => `${r.title}: ${r.url}`);
 
-        let noveltyResult;
+        let noveltyOutcome: EvaluationOutcome = "INCONCLUSIVE";
+        let noveltyResult: {
+          noveltyRisk: "LOW" | "MEDIUM" | "HIGH";
+          differentiator: string;
+          isNovel: boolean;
+          existingSolutionsFound: string[];
+        };
+
         try {
           noveltyResult = await step(
             "CRITICIZE",
             `Novelty check: is "${candidate.title.slice(0, 40)}" genuinely different from what exists?`,
-            () => ai.checkNovelty({
+            () => withRetry(() => ai.checkNovelty({
               candidateTitle: candidate.title,
               candidateDescription: candidate.description,
               existingSolutionsFound: existingUrls,
-            }),
+            })),
             `${existingUrls.length} existing solutions found`,
           );
-        } catch {
-          // Connection error or API failure — skip novelty check, continue with kill cycle
-          noveltyResult = { noveltyRisk: "LOW" as const, differentiator: "Novelty check skipped (connection error)", isNovel: true, existingSolutionsFound: [] };
+
+          if (noveltyResult.noveltyRisk === "HIGH" || !noveltyResult.isNovel) {
+            noveltyOutcome = "FAIL";
+          } else {
+            noveltyOutcome = "PASS";
+          }
+        } catch (err) {
+          // ISSUE 5 FIX: Novelty check error is NEVER treated as pass!
+          noveltyOutcome = "INCONCLUSIVE";
+          noveltyResult = {
+            noveltyRisk: "HIGH",
+            differentiator: `Novelty check inconclusive due to evaluation error: ${err instanceof Error ? err.message : String(err)}`,
+            isNovel: false,
+            existingSolutionsFound: existingUrls,
+          };
         }
 
-        if (noveltyResult.noveltyRisk === "HIGH") {
+        if (noveltyOutcome !== "PASS") {
           evaluated.survived = false;
-          evaluated.eliminationReason = `Novelty check: very similar to existing solutions — ${existingUrls.slice(0, 2).join(", ")}. ${noveltyResult.differentiator === "None identified" ? "No differentiator found." : noveltyResult.differentiator}`;
+          evaluated.evaluationOutcome = noveltyOutcome;
+          evaluated.eliminationReason = noveltyOutcome === "FAIL"
+            ? `Novelty check: very similar to existing solutions — ${existingUrls.slice(0, 2).join(", ")}. ${noveltyResult.differentiator === "None identified" ? "No differentiator found." : noveltyResult.differentiator}`
+            : `Novelty check inconclusive: could not verify uniqueness against ${existingUrls.length} existing solutions due to evaluation error.`;
           roundCandidates.push(evaluated);
           allEvaluatedCandidates.push(evaluated);
           await prisma.solutionCandidate.create({
@@ -515,20 +651,27 @@ export async function runHackathonAgent(
           continue;
         }
 
-        // Top evidence to pass into kill cycle for evidence-grounded verdicts
-        const topEvidenceExcerpts = uniqueEvidence.slice(0, 5).map(e => `${e.title}: ${e.snippet.slice(0, 200)}`);
+        // Top evidence to pass into kill cycle
+        const topEvidenceExcerpts = uniqueEvidence.slice(0, 5).map((e) => `${e.title}: ${e.snippet.slice(0, 200)}`);
 
         let stillAlive = true;
         for (let angleIdx = 0; angleIdx < angles.length; angleIdx++) {
           if (!stillAlive) break;
           const angle = angles[angleIdx]!;
 
-          let killResult;
+          let killOutcome: EvaluationOutcome = "INCONCLUSIVE";
+          let killResult: {
+            attackAngle: typeof angle;
+            attack: string;
+            survived: boolean;
+            reason: string;
+          };
+
           try {
-            killResult = await step(
+            const rawKill = await step(
               "CRITICIZE",
               `Round ${round} kill — "${candidate.title}" — ${angle}`,
-              () => ai.killRound({
+              () => withRetry(() => ai.killRound({
                 candidateTitle: candidate.title,
                 candidateDescription: candidate.description,
                 targetProblem: candidate.targetProblem,
@@ -537,23 +680,32 @@ export async function runHackathonAgent(
                 hackathonConstraints: constraints,
                 round: angleIdx + 1,
                 evidenceExcerpts: angle === "user" ? topEvidenceExcerpts : undefined,
-              }),
+              })),
               `${candidate.title} | ${angle}`,
             );
-          } catch {
-            // JSON truncation or connection error — default to survived=true for this angle
-            // so a transient failure doesn't kill a candidate unfairly
+
+            killOutcome = rawKill.survived ? "PASS" : "FAIL";
             killResult = {
               attackAngle: angle,
-              attack: "Kill round failed (connection/parse error) — defaulting to survived",
-              survived: true,
-              reason: "Error during evaluation — candidate passes this angle by default",
+              attack: rawKill.attack,
+              survived: rawKill.survived,
+              reason: rawKill.reason,
             };
-            // Record the failed round in the step log
+          } catch (err) {
+            // ISSUE 5 FIX: Evaluation error is marked INCONCLUSIVE and NEVER defaults to survived=true!
+            killOutcome = "INCONCLUSIVE";
+            const errMsg = err instanceof Error ? err.message : String(err);
+            killResult = {
+              attackAngle: angle,
+              attack: `Kill round failed after retries: ${errMsg}`,
+              survived: false,
+              reason: `Evaluation failed (${errMsg}) — marked INCONCLUSIVE. Never treated as pass.`,
+            };
+
             await addAgentStep(agentRunId, {
               stepNumber: ++stepNumber,
               stepType: "CRITICIZE",
-              description: `Round ${round} kill FAILED (error) — "${candidate.title}" — ${angle} — defaulting survived=true`,
+              description: `Round ${round} kill FAILED after retries — "${candidate.title}" — ${angle} — marked INCONCLUSIVE (fail-closed)`,
             });
           }
 
@@ -561,32 +713,49 @@ export async function runHackathonAgent(
             round: angleIdx + 1,
             attackAngle: angle,
             attack: killResult.attack,
-            survived: killResult.survived,
+            outcome: killOutcome,
+            survived: killOutcome === "PASS",
             reason: killResult.reason,
           });
 
-          if (!killResult.survived) {
+          if (killOutcome !== "PASS") {
             stillAlive = false;
-            evaluated.eliminationReason = `Round ${round} ${angle}: ${killResult.reason}`;
+            evaluated.survived = false;
+            evaluated.evaluationOutcome = killOutcome;
+            evaluated.eliminationReason = killOutcome === "FAIL"
+              ? `Round ${round} ${angle}: ${killResult.reason}`
+              : `Round ${round} ${angle}: Evaluation was inconclusive (${killResult.reason})`;
           }
         }
 
         if (stillAlive) {
           evaluated.survived = true;
+          evaluated.evaluationOutcome = "PASS";
           const lastKill = evaluated.killRounds[evaluated.killRounds.length - 1];
           evaluated.survivalReason = lastKill?.reason ?? "Survived all kill rounds";
-          const judgeKill = evaluated.killRounds.find(r => r.attackAngle === "judge");
+          const judgeKill = evaluated.killRounds.find((r) => r.attackAngle === "judge");
           if (judgeKill) {
             evaluated.judgeAlignmentScore = judgeKill.survived ? "HIGH" : "LOW";
             evaluated.judgeAlignmentReason = judgeKill.reason;
           }
+
+          // ISSUE 6 FIX: Produce explicit verifiable evidence requirements and empirical assumptions
+          evaluated.empiricalAssumptions = [
+            `Core assumption: Target problem ("${candidate.targetProblem}") is an active unaddressed friction in daily life of ${community}.`,
+            `Feasibility assumption: Proposed workflow can be implemented within hackathon constraints without prohibitive external dependencies.`,
+          ];
+          evaluated.evidenceRequirements = [
+            `Requirement 1: Direct user confirmation from at least 3 members of ${community} validating that current workarounds fail as predicted.`,
+            `Requirement 2: Working prototype demonstration validating end-to-end user loop.`,
+          ];
+
           allSurvivors.push(evaluated);
         }
 
         roundCandidates.push(evaluated);
         allEvaluatedCandidates.push(evaluated);
 
-        // Persist to DB
+        // Persist candidate to DB
         await prisma.solutionCandidate.create({
           data: {
             agentRunId,
@@ -609,36 +778,33 @@ export async function runHackathonAgent(
         candidatesSurvived: allSurvivors.length,
       });
 
-      // If survivors found, we're done with the loop
       if (allSurvivors.length > 0) break;
 
-      // Append this round's killed approaches to the context (persists across future runs)
-      const killedThisRound = roundCandidates.filter(c => !c.survived);
-      const killedTitles = killedThisRound.map(c => c.title);
+      const killedThisRound = roundCandidates.filter((c) => !c.survived);
+      const killedTitles = killedThisRound.map((c) => c.title);
       previousApproachesKilled.push(...killedTitles);
       void appendKilledApproaches(context.id, killedTitles).catch(() => {});
 
-      // All killed this round — diagnose and prepare next round
       if (round < MAX_ROUNDS) {
         lastDiagnosis = await step(
           "CRITICIZE",
           `Round ${round} diagnosis: why all candidates failed, what to try next`,
           () => ai.diagnoseFailures({
-            killedCandidates: killedThisRound.map(c => ({
+            killedCandidates: killedThisRound.map((c) => ({
               title: c.title,
               eliminationReason: c.eliminationReason ?? "Unknown",
             })),
             targetCommunity: community,
-            painMap,
+            painMap: currentPainMap,
           }),
           `${killedThisRound.length} killed this round`,
         );
 
-        // Add the diagnosis angle as an observation so it's visible in the case timeline
         await createObservation({
           painCaseId: context.painCaseId,
           content: `Round ${round} failure diagnosis: ${lastDiagnosis.commonFailurePattern}. Falsified assumption: ${lastDiagnosis.falsifiedAssumption}. New angle for round ${round + 1}: ${lastDiagnosis.newAngle}`,
           context: `Auto-generated by PainLab agent — investigation round ${round} diagnosis`,
+          source: "AI",
         });
       }
     }
@@ -671,7 +837,6 @@ async function conclude(
   forcedSummary: string | null,
 ) {
   if (survivors.length === 0) {
-    // Count how many total rounds and candidates were tried
     const totalCandidates = await prisma.solutionCandidate.count({ where: { agentRunId } });
     const totalRounds = await prisma.agentRun.findUnique({ where: { id: agentRunId }, select: { investigationRound: true } });
 
@@ -683,10 +848,14 @@ async function conclude(
 
     await createLearning({
       painCaseId,
-      statement: `The agent ran ${totalRounds?.investigationRound ?? 1} round(s) and evaluated ${totalCandidates} candidates. None survived. The failure diagnoses recorded in the timeline reveal what assumptions kept failing — these are the most useful output from this run.`,
+      statement: `The agent ran ${totalRounds?.investigationRound ?? 1} round(s) and evaluated ${totalCandidates} candidates. None survived. The failure diagnoses recorded in the timeline reveal what assumptions kept failing.`,
       basis: "Agent kill cycle — all rounds exhausted",
       confidence: "HIGH",
+      createdBy: "AI",
     });
+
+    // Run auditable belief revision across case evidence
+    await reviseBeliefsForCase(painCaseId, { preserveUserConclusions: true });
     return;
   }
 
@@ -694,7 +863,7 @@ async function conclude(
   let findings;
   try {
     findings = await ai.extractStructuredFindings({
-      survivors: survivors.map(s => ({
+      survivors: survivors.map((s) => ({
         title: s.title,
         description: s.description,
         targetProblem: s.targetProblem,
@@ -708,12 +877,16 @@ async function conclude(
     findings = null;
   }
 
-  // Save AI-generated hypotheses
+  // Save AI-generated hypotheses & link to evidence
   if (findings?.hypotheses?.length) {
     for (const h of findings.hypotheses) {
       try {
-        await prisma.hypothesis.create({
-          data: { painCaseId, statement: h.statement, rationale: h.rationale, createdBy: "AI" },
+        await introduceHypothesisClaim({
+          painCaseId,
+          statement: h.statement,
+          rationale: h.rationale,
+          evidenceIds: [],
+          createdBy: "AI",
         });
       } catch { /* non-fatal */ }
     }
@@ -736,13 +909,31 @@ async function conclude(
     }
   }
 
-  // Always add a plain-language survivor summary
+  // ISSUE 6 FIX: Distinguish candidate surviving criticism from empirical validation
+  // For each surviving candidate, create concrete planned experiments to empirically test assumptions
+  for (const survivor of survivors) {
+    try {
+      await createExperiment({
+        painCaseId,
+        title: `Empirical validation of "${survivor.title}"`,
+        question: `Does "${survivor.targetProblem}" represent an active friction for ${context.targetCommunity} that current workarounds fail to resolve?`,
+        procedure: `1. Interview or survey 5 members of ${context.targetCommunity}. 2. Validate unaddressed friction and workaround limitations. 3. Test core assumption against evidence requirements: ${(survivor.evidenceRequirements ?? []).join("; ")}`,
+        expectedOutcome: "At least 3 participants confirm the problem severity and express demand for the proposed solution.",
+        status: "PLANNED",
+      });
+    } catch { /* non-fatal */ }
+  }
+
   await createLearning({
     painCaseId,
-    statement: `${survivors.length} candidate(s) survived: ${survivors.map(s => `"${s.title}"`).join(", ")}. Each passed user-need, technical feasibility, and judge-alignment checks.`,
-    basis: "Agent kill cycle results",
+    statement: `${survivors.length} candidate(s) survived adversarial criticism: ${survivors.map((s) => `"${s.title}"`).join(", ")}. NOTE: Surviving criticism is NOT empirical validation. Core assumptions remain unverified until planned experiments are executed.`,
+    basis: "Agent kill cycle results — theoretical survival only",
     confidence: "MEDIUM",
+    createdBy: "AI",
   });
+
+  // Run belief revision across case entries, preserving user conclusions
+  await reviseBeliefsForCase(painCaseId, { preserveUserConclusions: true });
 
   const topSurvivor = survivors[0];
   const totalCandidates = await prisma.solutionCandidate.count({ where: { agentRunId } });
@@ -750,7 +941,7 @@ async function conclude(
   await updateAgentRun(agentRunId, {
     status: "COMPLETED",
     completedAt: new Date(),
-    summary: `${survivors.length} of ${totalCandidates} candidates survived. Top: "${topSurvivor?.title}" — ${topSurvivor?.survivalReason ?? ""}`,
+    summary: `${survivors.length} of ${totalCandidates} candidates survived adversarial criticism (unverified hypotheses). Planned experiments registered for empirical validation. Top: "${topSurvivor?.title}" — ${topSurvivor?.survivalReason ?? ""}`,
   });
 }
 

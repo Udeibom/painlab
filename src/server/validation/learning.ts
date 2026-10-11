@@ -5,6 +5,7 @@ export const createLearningSchema = z.object({
   statement: z.string().min(1, "Statement is required").max(5000),
   basis: z.string().max(5000).optional(),
   confidence: z.enum(["LOW", "MEDIUM", "HIGH"]).optional(),
+  createdBy: z.enum(["USER", "AI"]).optional(),
 });
 
 export type CreateLearningInput = z.infer<typeof createLearningSchema>;
