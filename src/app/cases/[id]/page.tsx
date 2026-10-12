@@ -77,7 +77,7 @@ export default async function CaseDetailPage({
           ) : (
             <>
               <h2 className="mb-4 text-sm font-semibold text-stone-700">Current State</h2>
-              {/* Show completed agent summary if there was a run */}
+      {/* Show completed agent summary if there was a run */}
               {latestRun && latestRun.summary && (
                 <div className={`mb-4 rounded-md px-3 py-2 text-xs ${
                   latestRun.status === "COMPLETED"
@@ -87,6 +87,9 @@ export default async function CaseDetailPage({
                     : "bg-red-50 border border-red-200 text-red-700"
                 }`}>
                   <span className="font-medium">Agent: </span>{latestRun.summary}
+                  <Link href={`/cases/${painCase.id}/investigation`} className="ml-2 underline hover:no-underline">
+                    View full investigation →
+                  </Link>
                 </div>
               )}
               <CurrentStatePanel
