@@ -204,48 +204,78 @@ Return JSON:
   }
 
   // ── killRound ──────────────────────────────────────────────────────────────
-  // One round of structured criticism. Smart model. Returns survive/kill verdict.
+  // One round of structured criticism. Smart model. Returns PASS/FAIL/INCONCLUSIVE.
+  // INCONCLUSIVE = insufficient evidence to decide either way (goes to "needs research" bucket)
 
   async killRound(input: KillRoundInput): Promise<KillRoundResult> {
     const evidenceSection = input.evidenceExcerpts && input.evidenceExcerpts.length > 0
-      ? `\nACTUAL EVIDENCE COLLECTED (cite this when making claims about user behavior):\n${input.evidenceExcerpts.slice(0, 5).map((e, i) => `[${i}] ${e.slice(0, 250)}`).join("\n")}`
-      : "";
+      ? `\nACTUAL EVIDENCE FOR THIS CANDIDATE (cite when making claims about user behavior):\n${input.evidenceExcerpts.slice(0, 5).map((e, i) => `[${i}] ${e.slice(0, 250)}`).join("\n")}`
+      : "\nWARNING: No evidence excerpts provided for this candidate. All claims about user behavior will be ungrounded.";
 
     const angleInstructions: Record<string, string> = {
       user: `USER ANGLE: Is the friction this solves severe enough that people are already paying money, wasting significant time, or experiencing real consequences without a solution?
-The real test is not "would users adopt this?" — it is "are people already suffering without it?"
+The test is NOT "would users adopt this?" — it is "are people already suffering without it?"
 Look at whether: people currently pay money (to others, in workarounds, in losses) because this problem exists, OR people tolerate meaningful ongoing cost/time/stress because they have no better option.
-EVIDENCE REQUIREMENT: If you claim the friction is not severe enough, cite specific evidence. No evidence = survived=true.
-VALID kill: evidence shows people are satisfied with their current workaround and it costs them nothing meaningful, OR the problem only occurs once and the user already has a one-time solution.
-INVALID kill: "users might not trust it", "adoption is uncertain", "the workaround already works" — a workaround that works but costs time, money, or reliability is still a real pain.`,
+
+EVIDENCE RULE: Every claim about user behavior MUST cite evidence from the excerpts above.
+- If evidence SUPPORTS the claim: PASS
+- If evidence CONTRADICTS the claim: FAIL
+- If evidence is MISSING or INSUFFICIENT to decide: INCONCLUSIVE
+
+VALID PASS: evidence shows people pay money, waste significant time, or suffer consequences due to this problem.
+VALID FAIL: evidence shows current workaround works well at low cost, OR problem is rare and already solved.
+INVALID PASS: "seems like it would be useful", "users might want this" — these are opinions, not evidence.
+INVALID FAIL: "adoption uncertain", "users might not trust it" — adoption risk is not evidence of low pain.`,
 
       technical: `TECHNICAL ANGLE: Is this idea technically possible to build at all?
-The question is not about speed or demo scope — it is whether the core mechanic can exist.
-This hackathon may run for weeks or months. Do NOT kill something because it takes time to build.
-IMPORTANT: Do NOT claim an API capability is unavailable unless you are certain. When uncertain, assume the platform exposes the needed data.
-VALID kill: the core mechanic is fundamentally impossible — requires regulatory approval that will never come, relies on data that definitively does not exist, or requires infrastructure no individual developer can access at any price.
-INVALID kill: "it takes time to build", "needs API access application", "requires careful implementation", "might not scale". These are NOT fatal flaws.`,
+The question is whether the core mechanic can exist. Timeline (weeks/months) is irrelevant.
+IMPORTANT: Do NOT claim an API capability is unavailable unless certain. When uncertain, assume platform exposes needed data.
+
+EVIDENCE RULE: Every technical claim MUST cite evidence or known platform capabilities.
+- If evidence SUPPORTS feasibility: PASS
+- If evidence CONTRADICTS feasibility: FAIL
+- If evidence is MISSING or INSUFFICIENT: INCONCLUSIVE
+
+VALID PASS: core mechanic uses available APIs/data that demonstrably exist.
+VALID FAIL: core mechanic is fundamentally impossible — requires regulatory approval that will never come, relies on data that definitively does not exist, or requires infrastructure no individual developer can access.
+INVALID PASS: "probably works", "should be possible" — these are guesses.
+INVALID FAIL: "takes time to build", "needs API application", "might not scale" — these are NOT fatal flaws.`,
 
       judge: `JUDGE ANGLE: Based on these specific judges: ${input.judgeProfile ?? "unknown judges"}
-Would this score well on: (1) technological implementation — genuine meaningful API usage plus real AI doing something non-trivial, (2) potential impact — a credible, specific real-world problem with real consequences for real people, (3) innovation — either new approach or significantly better execution of an existing idea with a clear gap in the market?
-VALID kill: the project has zero meaningful integration with the required tech, OR the AI is just a thin chatbot wrapper with no intelligence, OR there is already a mature well-adopted product solving exactly this for exactly this audience.
-INVALID kill: "judges might prefer something else", "not the most innovative possible", "demo might be rough".
-Name the specific criterion and whether it passes or fails.`,
+Evaluate against: (1) technological implementation — genuine meaningful API usage plus real AI doing something non-trivial, (2) potential impact — credible, specific real-world problem with real consequences for real people, (3) innovation — new approach or significantly better execution with clear market gap.
+
+EVIDENCE RULE: Every judge-relevant claim MUST be grounded.
+- If evidence SUPPORTS the criterion: PASS
+- If evidence CONTRADICTS the criterion: FAIL
+- If evidence is MISSING or INSUFFICIENT: INCONCLUSIVE
+
+VALID PASS: evidence shows meaningful tech integration + real AI + specific problem.
+VALID FAIL: zero meaningful integration, OR AI is thin chatbot wrapper, OR mature product already solves exactly this for exactly this audience.
+INVALID PASS: "judges might like it", "looks good" — opinions not evidence.
+INVALID FAIL: "judges might prefer something else", "not most innovative possible" — preferences not evidence.`,
 
       impact: `IMPACT ANGLE: Is this idea genuinely compelling or just safe?
-This is the hardest question. Many ideas survive the other kill rounds because nothing is technically wrong with them. This round asks whether the idea is worth caring about.
+This round asks whether the idea is worth caring about.
 
-Ask three questions:
-1. WHO SPECIFICALLY experiences this pain acutely? Not "freelancers" — which freelancers, in what situation, experiencing what exact consequence? If you cannot name a specific sub-group experiencing this severely, the idea is probably too generic.
-2. WHAT IS THE REAL COST WITHOUT THIS? In money lost, time wasted, relationships damaged, or opportunities missed — is the absence of this solution something people actually feel? "Slightly inconvenient" is not a real cost. "Loses $200/month to fees they can't track", "misses cash flow problems before they become crises", "can't take on more clients because admin takes 10 hours a week" — those are real costs.
-3. WOULD SOMEONE TELL A FRIEND ABOUT THIS? If someone in the target audience found this product, would they tell others in their situation? Or would they say "oh that's useful" and forget about it? Products that spread are solving pains people talk about.
+Three questions — each MUST be answered from evidence:
+1. WHO SPECIFICALLY experiences this pain acutely? Name a specific sub-group with evidence of severe consequences.
+2. WHAT IS THE REAL COST WITHOUT THIS? In money lost, time wasted, relationships damaged, or opportunities missed — is the absence felt? "Slightly inconvenient" is not a real cost. "Loses $200/month", "misses cash flow crises", "can't take more clients due to 10h/week admin" — these are real costs.
+3. WOULD SOMEONE TELL A FRIEND ABOUT THIS? Products that spread solve pains people talk about.
 
-VALID kill: the pain is genuinely mild — it doesn't cost money, doesn't have real consequences, and the current workaround works well enough that most people don't think about it. OR the specific audience experiencing it acutely is very small and unlikely to grow.
-INVALID kill: "the market is competitive", "it might be hard to monetize", "users are used to doing it manually". These are business concerns, not impact concerns.`,
+EVIDENCE RULE: Every claim MUST cite evidence.
+- If evidence SUPPORTS real impact: PASS
+- If evidence CONTRADICTS (pain is mild, workaround works well, audience tiny): FAIL
+- If evidence is MISSING or INSUFFICIENT: INCONCLUSIVE
+
+VALID PASS: evidence shows specific sub-group with severe cost + word-of-mouth potential.
+VALID FAIL: evidence shows pain is genuinely mild, workaround works well, audience very small/unlikely to grow.
+INVALID PASS: "could be impactful", "might help people" — these are hopes.
+INVALID FAIL: "market competitive", "hard to monetize", "users do it manually" — business concerns, not impact.`,
     };
 
     const prompt = `
-Kill cycle evaluation.
+Kill cycle evaluation — THREE outcomes: PASS, FAIL, or INCONCLUSIVE.
+INCONCLUSIVE = insufficient evidence to decide. It does NOT mean pass.
 
 Candidate: "${input.candidateTitle}"
 Description: ${input.candidateDescription}
@@ -257,18 +287,20 @@ EVALUATION ANGLE: ${input.attackAngle}
 ${angleInstructions[input.attackAngle]}
 
 DECISION RULES:
-- survived=true if the candidate has no FATAL flaw from this angle
-- survived=false ONLY when you can name one CONCRETE, SPECIFIC fatal blocker
-- For user angle: unsupported opinion about adoption = survived=true. Must cite evidence.
-- "There's competition" is NEVER a fatal flaw
-- "It could be better" is NEVER a fatal flaw
+- PASS: evidence SUPPORTS the candidate from this angle
+- FAIL: evidence CONTRADICTS the candidate from this angle
+- INCONCLUSIVE: evidence is MISSING, INSUFFICIENT, or CONFLICTING — cannot decide
+
+CRITICAL: "No evidence found" is INCONCLUSIVE, NOT pass. Absence of counter-evidence is NOT evidence of support.
+"There's competition" is NEVER a fatal flaw.
+"It could be better" is NEVER a fatal flaw.
 
 Return JSON — keep all string fields under 60 words each:
 {
   "attackAngle": "${input.attackAngle}",
-  "attack": "max 20 words: name the weakness",
-  "survived": boolean,
-  "reason": "max 20 words: the fatal blocker (if killed) OR which criterion passes (if survived)"
+  "attack": "max 20 words: the weakness being tested",
+  "outcome": "PASS" | "FAIL" | "INCONCLUSIVE",
+  "reason": "max 20 words: evidence supporting the outcome"
 }`.trim();
 
     return this.callJson<KillRoundResult>(SMART_MODEL, prompt, 700, KillRoundResultSchema);

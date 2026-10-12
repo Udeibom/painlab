@@ -28,7 +28,7 @@ export class NullAiProvider implements AiProvider {
     return { existingSolutionsFound: [], isNovel: true, differentiator: "", noveltyRisk: "LOW" };
   }
   async killRound(_: KillRoundInput): Promise<KillRoundResult> {
-    return { attackAngle: "user", attack: "", survived: false, reason: "Null provider" };
+    return { attackAngle: "user", attack: "", outcome: "INCONCLUSIVE", reason: "Null provider" };
   }
   async synthesizeJudgeProfile(_: JudgeProfileInput): Promise<JudgeProfileOutput> {
     return { inferredValues: [], inferredPreferences: "", confidence: "LOW" };

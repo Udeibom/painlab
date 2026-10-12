@@ -43,7 +43,7 @@ export const GeneratedCandidatesListSchema = z.array(GeneratedCandidateSchema);
 export const KillRoundResultSchema = z.object({
   attackAngle: z.enum(["user", "technical", "judge", "impact"]),
   attack: z.string().default(""),
-  survived: z.boolean(),
+  outcome: z.enum(["PASS", "FAIL", "INCONCLUSIVE"]),
   reason: z.string().default(""),
 });
 

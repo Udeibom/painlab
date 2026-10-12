@@ -53,6 +53,10 @@ import {
   type SolutionLifecycleStage,
 } from "../services/candidateVerificationService";
 import { retrieveRelevantPriorFindings } from "../services/crossInvestigationMemoryService";
+import {
+  assessEvidenceQuality,
+  type EvidenceItemForAssessment,
+} from "../services/evidenceQualityService";
 import type { AiProvider, PainMap, FailureDiagnosis } from "../providers/ai/types";
 import type { TavilyResearchProvider } from "../providers/research/tavilyProvider";
 import type { HackathonContext, Confidence } from "@prisma/client";
@@ -616,6 +620,51 @@ export async function runHackathonAgent(
           lifecycleStage: "PROPOSED",
         };
 
+        // ── Per-candidate evidence binding: fetch the specific evidence this candidate claims to be grounded in
+        const candidateGroundedIndices = (candidate.groundedIn ?? []).map((g) => Number(g)).filter((n) => !isNaN(n));
+        const candidateEvidenceExcerpts: string[] = [];
+        for (const idx of candidateGroundedIndices) {
+          if (idx >= 0 && idx < uniqueEvidence.length) {
+            candidateEvidenceExcerpts.push(`${uniqueEvidence[idx].title}: ${uniqueEvidence[idx].snippet.slice(0, 300)}`);
+          }
+        }
+
+        // ── Evidence Quality Gate: reject candidates with ungrounded claims before kill rounds
+        if (candidateEvidenceExcerpts.length > 0) {
+          const evidenceItems: EvidenceItemForAssessment[] = candidateEvidenceExcerpts.map((excerpt, i) => ({
+            claim: candidate.description,
+            excerpt,
+            source: uniqueEvidence[candidateGroundedIndices[i]]?.url ?? `evidence-${i}`,
+            sourceType: (uniqueEvidence[candidateGroundedIndices[i]]?.sourceType as any) ?? "WEB",
+          }));
+          const qualityResults = evidenceItems.map(assessEvidenceQuality);
+          const avgComposite = qualityResults.reduce((sum, q) => sum + q.compositeScore, 0) / qualityResults.length;
+          const allGrounded = qualityResults.every((q) => q.isGrounded);
+          const avgGrounding = qualityResults.reduce((sum, q) => sum + q.groundingScore, 0) / qualityResults.length;
+
+          if (!allGrounded || avgGrounding < 0.3 || avgComposite < 0.35) {
+            evaluated.survived = false;
+            evaluated.evaluationOutcome = "FAIL";
+            evaluated.lifecycleStage = "PROPOSED";
+            evaluated.eliminationReason = `Evidence quality gate failed: avg grounding=${avgGrounding.toFixed(2)}, avg composite=${avgComposite.toFixed(2)}, allGrounded=${allGrounded}. Candidate claims not sufficiently grounded in cited evidence.`;
+            roundCandidates.push(evaluated);
+            allEvaluatedCandidates.push(evaluated);
+            await prisma.solutionCandidate.create({
+              data: {
+                agentRunId,
+                title: evaluated.title,
+                description: evaluated.description,
+                targetProblem: evaluated.targetProblem,
+                evidenceSources: evaluated.evidenceSources,
+                killRounds: evaluated.killRounds as unknown as import("@prisma/client").Prisma.JsonArray,
+                survived: false,
+                eliminationReason: evaluated.eliminationReason,
+              },
+            });
+            continue;
+          }
+        }
+
         // ── Novelty & Competitor check: search for existing solutions
         const existingSearch = await step(
           "SEARCH",
@@ -715,10 +764,13 @@ export async function runHackathonAgent(
           continue;
         }
 
-        // Top evidence to pass into kill cycle
-        const topEvidenceExcerpts = uniqueEvidence.slice(0, 5).map((e) => `${e.title}: ${e.snippet.slice(0, 200)}`);
+        // Use candidate-specific evidence for kill rounds
+        const killEvidenceExcerpts = candidateEvidenceExcerpts.length > 0
+          ? candidateEvidenceExcerpts
+          : uniqueEvidence.slice(0, 5).map((e) => `${e.title}: ${e.snippet.slice(0, 200)}`);
 
         let stillAlive = true;
+        let hasInconclusive = false;
         for (let angleIdx = 0; angleIdx < angles.length; angleIdx++) {
           if (!stillAlive) break;
           const angle = angles[angleIdx]!;
@@ -727,7 +779,7 @@ export async function runHackathonAgent(
           let killResult: {
             attackAngle: typeof angle;
             attack: string;
-            survived: boolean;
+            outcome: EvaluationOutcome;
             reason: string;
           };
 
@@ -743,26 +795,27 @@ export async function runHackathonAgent(
                 judgeProfile: angle === "judge" ? combinedJudgeProfile : undefined,
                 hackathonConstraints: constraints,
                 round: angleIdx + 1,
-                evidenceExcerpts: angle === "user" ? topEvidenceExcerpts : undefined,
+                evidenceExcerpts: killEvidenceExcerpts,
               })),
               `${candidate.title} | ${angle}`,
             );
 
-            killOutcome = rawKill.survived ? "PASS" : "FAIL";
+            // New three-outcome schema: PASS, FAIL, INCONCLUSIVE
+            killOutcome = rawKill.outcome as EvaluationOutcome;
             killResult = {
               attackAngle: angle,
               attack: rawKill.attack,
-              survived: rawKill.survived,
+              outcome: killOutcome,
               reason: rawKill.reason,
             };
           } catch (err) {
-            // ISSUE 5 FIX: Evaluation error is marked INCONCLUSIVE and NEVER defaults to survived=true!
+            // Evaluation error is marked INCONCLUSIVE and NEVER defaults to pass!
             killOutcome = "INCONCLUSIVE";
             const errMsg = err instanceof Error ? err.message : String(err);
             killResult = {
               attackAngle: angle,
               attack: `Kill round failed after retries: ${errMsg}`,
-              survived: false,
+              outcome: "INCONCLUSIVE",
               reason: `Evaluation failed (${errMsg}) — marked INCONCLUSIVE. Never treated as pass.`,
             };
 
@@ -782,17 +835,19 @@ export async function runHackathonAgent(
             reason: killResult.reason,
           });
 
-          if (killOutcome !== "PASS") {
+          if (killOutcome === "FAIL") {
             stillAlive = false;
             evaluated.survived = false;
-            evaluated.evaluationOutcome = killOutcome;
-            evaluated.eliminationReason = killOutcome === "FAIL"
-              ? `Round ${round} ${angle}: ${killResult.reason}`
-              : `Round ${round} ${angle}: Evaluation was inconclusive (${killResult.reason})`;
+            evaluated.evaluationOutcome = "FAIL";
+            evaluated.eliminationReason = `Round ${round} ${angle}: ${killResult.reason}`;
+          } else if (killOutcome === "INCONCLUSIVE") {
+            // INCONCLUSIVE in any round = candidate needs more research, not a survivor
+            hasInconclusive = true;
           }
         }
 
-        if (stillAlive) {
+        if (stillAlive && !hasInconclusive) {
+          // PASS on all four angles — candidate survives
           evaluated.survived = true;
           evaluated.evaluationOutcome = "PASS";
           evaluated.lifecycleStage = "EVALUATED";
@@ -804,7 +859,7 @@ export async function runHackathonAgent(
             evaluated.judgeAlignmentReason = judgeKill.reason;
           }
 
-          // ISSUE 6 FIX: Produce explicit verifiable evidence requirements and empirical assumptions
+          // Explicit verifiable evidence requirements and empirical assumptions
           evaluated.empiricalAssumptions = [
             `Core assumption: Target problem ("${candidate.targetProblem}") is an active unaddressed friction in daily life of ${community}.`,
             `Feasibility assumption: Proposed workflow can be implemented within hackathon constraints without prohibitive external dependencies.`,
@@ -815,6 +870,17 @@ export async function runHackathonAgent(
           ];
 
           allSurvivors.push(evaluated);
+        } else if (hasInconclusive && !stillAlive) {
+          // Mixed: some FAIL, some INCONCLUSIVE
+          evaluated.survived = false;
+          evaluated.evaluationOutcome = "FAIL";
+          evaluated.eliminationReason = `Round ${round}: mixed outcomes — at least one FAIL and at least one INCONCLUSIVE. Needs more evidence.`;
+        } else if (hasInconclusive) {
+          // All INCONCLUSIVE or mix of PASS/INCONCLUSIVE — needs more research
+          evaluated.survived = false;
+          evaluated.evaluationOutcome = "INCONCLUSIVE";
+          evaluated.eliminationReason = `Round ${round}: evaluation inconclusive on one or more angles (insufficient evidence). Candidate moved to "needs more research" bucket.`;
+          // Don't add to survivors — goes to research queue for next round
         }
 
         roundCandidates.push(evaluated);
@@ -845,24 +911,28 @@ export async function runHackathonAgent(
 
       if (allSurvivors.length > 0) break;
 
-      const killedThisRound = roundCandidates.filter((c) => !c.survived);
+      const killedThisRound = roundCandidates.filter((c) => !c.survived && c.evaluationOutcome === "FAIL");
+      const inconclusiveThisRound = roundCandidates.filter((c) => c.evaluationOutcome === "INCONCLUSIVE");
       const killedTitles = killedThisRound.map((c) => c.title);
       previousApproachesKilled.push(...killedTitles);
       void appendKilledApproaches(context.id, killedTitles).catch(() => {});
 
       if (round < MAX_ROUNDS) {
+        // Include INCONCLUSIVE candidates in diagnosis — they reveal evidence gaps
+        const allNonSurvivors = [...killedThisRound, ...inconclusiveThisRound];
+
         lastDiagnosis = await step(
           "CRITICIZE",
-          `Round ${round} diagnosis: why all candidates failed, what to try next`,
+          `Round ${round} diagnosis: why all candidates failed or were inconclusive, what to try next`,
           () => ai.diagnoseFailures({
-            killedCandidates: killedThisRound.map((c) => ({
+            killedCandidates: allNonSurvivors.map((c) => ({
               title: c.title,
               eliminationReason: c.eliminationReason ?? "Unknown",
             })),
             targetCommunity: community,
             painMap: currentPainMap,
           }),
-          `${killedThisRound.length} killed this round`,
+          `${allNonSurvivors.length} non-survivors (${killedThisRound.length} killed, ${inconclusiveThisRound.length} inconclusive)`,
         );
 
         await createObservation({

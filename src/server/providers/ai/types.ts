@@ -55,8 +55,8 @@ export interface KillRoundInput {
 export interface KillRoundResult {
   attackAngle: KillAngle;
   attack: string;   // the criticism
-  survived: boolean;
-  reason: string;   // why it survived or was killed
+  outcome: "PASS" | "FAIL" | "INCONCLUSIVE";
+  reason: string;   // evidence supporting the outcome
 }
 
 // ── judgeProfileSynthesis ────────────────────────────────────────────────────
